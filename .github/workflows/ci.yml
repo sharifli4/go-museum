@@ -34,5 +34,5 @@ jobs:
         with:
           go-version: "1.24.4"
 
-      - name: Escape-output check
-        run: npm run check:escape
+      - name: Go checks (escape, parser, slices)
+        run: npm run check:go

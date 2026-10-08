@@ -6,13 +6,19 @@
     "node": ">=20.11.0"
   },
   "scripts": {
-    "dev": "npm run generate:escape && next dev",
-    "build": "npm run generate:escape && next build",
+    "dev": "npm run generate:go-sources && next dev",
+    "build": "npm run generate:go-sources && next build",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "generate:escape": "node scripts/generate-escape-source.mjs",
-    "check:escape": "node scripts/check-escape.mjs"
+    "generate:parser": "node scripts/generate-parser-source.mjs",
+    "generate:slices": "node scripts/generate-slices-source.mjs",
+    "generate:go-sources": "npm run generate:escape && npm run generate:parser && npm run generate:slices",
+    "check:escape": "node scripts/check-escape.mjs",
+    "check:parser": "node scripts/check-parser.mjs",
+    "check:slices": "node scripts/check-slices.mjs",
+    "check:go": "npm run check:escape && npm run check:parser && npm run check:slices"
   },
   "dependencies": {
     "framer-motion": "^12.4.0",

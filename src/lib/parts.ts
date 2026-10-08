@@ -1,20 +1,13 @@
 import type { Part } from "./types";
 import { ESCAPE_SOURCE_LINES } from "./escape-source.generated";
+import { PARSER_SOURCE_LINES } from "./parser-source.generated";
+import { SLICES_SOURCE_LINES } from "./slices-source.generated";
 
 /**
  * Content copied verbatim from GO-MUSEUM-SLICE1-LOCK.md §6 and §0.
  * Do not invent captions, code, hints, tokens, AST node names, or
  * slice len/cap. See docs/GO-MUSEUM-SLICE1-LOCK.md for the source of truth.
  */
-
-const PARSER_LINES = [
-  "package main",
-  "",
-  "func main() {",
-  "\tx := 1 + 2",
-  "\tprintln(x)",
-  "}",
-] as const;
 
 export const parserPart: Part = {
   id: "parser",
@@ -25,7 +18,7 @@ export const parserPart: Part = {
   overviewBlurb: "Source is chopped into tokens and assembled into a tree.",
   subtitle: "Source is chopped into tokens and assembled into a tree.",
   file: "main.go",
-  lines: PARSER_LINES,
+  lines: PARSER_SOURCE_LINES,
   steps: [
     {
       n: 1,
@@ -190,18 +183,6 @@ export const escapePart: Part = {
   ],
 };
 
-const SLICES_LINES = [
-  "package main",
-  "",
-  "func main() {",
-  "\ta := []int{1, 2, 3}",
-  "\tb := a[:2]",
-  "\tb[0] = 9",
-  "\tb = append(b, 4)",
-  "\tc := append(b, 5, 6, 7)",
-  "}",
-] as const;
-
 export const slicesPart: Part = {
   id: "slices",
   groupId: "part-slices",
@@ -211,7 +192,7 @@ export const slicesPart: Part = {
   overviewBlurb: "Headers point at cells. Append can move one slice to a new array.",
   subtitle: "Headers point at cells. Append can move one slice to a new array.",
   file: "main.go",
-  lines: SLICES_LINES,
+  lines: SLICES_SOURCE_LINES,
   steps: [
     {
       n: 1,
