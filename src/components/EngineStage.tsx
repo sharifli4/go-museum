@@ -30,6 +30,69 @@ const ESCAPE_GATE_ANGLE: Record<number, number> = {
 
 const ESCAPE_CARD_LANDED_FROM_STEP = 5;
 
+/** lock §6.1: "current step ink at 1.5px; earlier hairline; later dashed." */
+function applyAstNodeState(el: SVGElement, created: number, step: number) {
+  if (created > step) {
+    el.style.opacity = "0.45";
+    el.style.strokeDasharray = "3 3";
+    el.style.strokeWidth = "1";
+    el.style.stroke = ""; // back to the element's own (muted) stroke attribute
+  } else if (created === step) {
+    el.style.opacity = "1";
+    el.style.strokeDasharray = "none";
+    el.style.strokeWidth = "1.5";
+    el.style.stroke = "var(--ink)"; // lock §6.1: current step's node is ink at 1.5px
+  } else {
+    el.style.opacity = "1";
+    el.style.strokeDasharray = "none";
+    el.style.strokeWidth = "1";
+    el.style.stroke = ""; // back to the element's own (muted) stroke attribute
+  }
+}
+
+function applyParserStep(detail: SVGGElement, step: number) {
+  detail.querySelectorAll<SVGGElement>("[data-node]").forEach((node) => {
+    const created = Number(node.getAttribute("data-created"));
+    const rect = node.querySelector<SVGRectElement>("rect");
+    if (rect) applyAstNodeState(rect, created, step);
+  });
+  detail.querySelectorAll<SVGPathElement>("[data-connector]").forEach((connector) => {
+    const created = Number(connector.getAttribute("data-created"));
+    applyAstNodeState(connector, created, step);
+  });
+}
+
+const SLICES_B_INFO: Record<number, string> = {
+  3: "len 2 cap 3",
+  4: "len 2 cap 3",
+  5: "len 3 cap 3",
+  6: "len 3 cap 3",
+  7: "len 3 cap 3",
+  8: "len 3 cap 3",
+  9: "len 3 cap 3",
+};
+
+const SLICES_RACK1_CELLS: Record<number, [string, string, string]> = {
+  2: ["1", "2", "3"],
+  3: ["1", "2", "3"],
+  4: ["9", "2", "3"],
+  5: ["9", "2", "4"],
+  6: ["9", "2", "4"],
+  7: ["9", "2", "4"],
+  8: ["9", "2", "4"],
+  9: ["9", "2", "4"],
+};
+
+function applySlicesStep(detail: SVGGElement, step: number) {
+  const bInfo = detail.querySelector("#sliceBInfo");
+  if (bInfo) bInfo.textContent = SLICES_B_INFO[step] ?? SLICES_B_INFO[3];
+  const cells = SLICES_RACK1_CELLS[step] ?? SLICES_RACK1_CELLS[2];
+  cells.forEach((value, i) => {
+    const cell = detail.querySelector(`#sliceCell${i}`);
+    if (cell) cell.textContent = value;
+  });
+}
+
 interface EngineStageProps {
   openPartId: PartId | null;
   currentStep: number;
@@ -197,26 +260,32 @@ export function EngineStage({
     return () => controls.stop();
   }, [openPartId, reducedMotion]);
 
-  // Escape part: compact art fades out, detail art fades in and reacts to
-  // the current step (lock §5.4, §6.2). Other groups fade during zoom (§5.1).
+  // Every part: compact art fades out, detail art fades in and reacts to
+  // the current step (lock §5.4, §6.1-§6.3). Other groups fade during zoom
+  // (§5.1). Generic across parts; escape/parser/slices each get a small
+  // part-specific pass for the bits plain data-step show/hide can't do
+  // (gate rotation, AST node weight, slice cell values).
   useEffect(() => {
     const svg = svgRef.current;
     if (!svg) return;
-    const escapeOpen = openPartId === "escape";
 
-    const compact = svg.querySelector<SVGGElement>(".escape-compact");
-    const detail = svg.querySelector<SVGGElement>(".escape-detail");
-    compact?.classList.toggle("is-open", escapeOpen);
-    if (compact) compact.style.opacity = escapeOpen ? "0" : "1";
-    if (detail) {
-      // `display: none` (not just opacity) when closed, so this far larger
-      // sub-drawing never inflates part-escape's hoverable/hit-test bbox.
-      if (escapeOpen) {
-        detail.style.display = "";
-        requestAnimationFrame(() => detail.classList.add("is-open"));
-      } else {
-        detail.classList.remove("is-open");
-        detail.style.display = "none";
+    for (const id of PART_IDS) {
+      const partGroup = svg.querySelector<SVGGElement>(`#part-${id}`);
+      if (!partGroup) continue;
+      const isOpen = openPartId === id;
+      const compact = partGroup.querySelector<SVGGElement>(".part-compact");
+      const detail = partGroup.querySelector<SVGGElement>(".part-detail");
+      if (compact) compact.style.opacity = isOpen ? "0" : "1";
+      if (detail) {
+        // `display: none` (not just opacity) when closed, so these larger
+        // sub-drawings never inflate the part's hoverable/hit-test bbox.
+        if (isOpen) {
+          detail.style.display = "";
+          requestAnimationFrame(() => detail.classList.add("is-open"));
+        } else {
+          detail.classList.remove("is-open");
+          detail.style.display = "none";
+        }
       }
     }
 
@@ -245,22 +314,30 @@ export function EngineStage({
       }
     }
 
-    if (!escapeOpen || !detail) return;
+    if (!openPartId) return;
+    const openGroup = svg.querySelector<SVGGElement>(`#part-${openPartId}`);
+    const detail = openGroup?.querySelector<SVGGElement>(".part-detail");
+    if (!detail) return;
 
     const step = Math.min(9, Math.max(1, currentStep));
 
-    const gate = detail.querySelector<SVGGElement>("#escapeGate");
-    if (gate) {
-      const angle = ESCAPE_GATE_ANGLE[step] ?? 42;
-      gate.setAttribute("transform", `rotate(${angle} 446 196)`);
-    }
-
-    const card = detail.querySelector<SVGGElement>("#escapeUserCard");
-    if (card) {
-      card.setAttribute(
-        "transform",
-        step >= ESCAPE_CARD_LANDED_FROM_STEP ? "translate(0 32)" : "translate(0 0)"
-      );
+    if (openPartId === "escape") {
+      const gate = detail.querySelector<SVGGElement>("#escapeGate");
+      if (gate) {
+        const angle = ESCAPE_GATE_ANGLE[step] ?? 42;
+        gate.setAttribute("transform", `rotate(${angle} 446 196)`);
+      }
+      const card = detail.querySelector<SVGGElement>("#escapeUserCard");
+      if (card) {
+        card.setAttribute(
+          "transform",
+          step >= ESCAPE_CARD_LANDED_FROM_STEP ? "translate(0 32)" : "translate(0 0)"
+        );
+      }
+    } else if (openPartId === "parser") {
+      applyParserStep(detail, step);
+    } else if (openPartId === "slices") {
+      applySlicesStep(detail, step);
     }
 
     const stepped = detail.querySelectorAll<SVGElement>("[data-step]");
@@ -271,7 +348,7 @@ export function EngineStage({
       el.style.pointerEvents = visible ? "auto" : "none";
     });
 
-    const part = getPart("escape");
+    const part = getPart(openPartId);
     const caption = part?.steps[step - 1]?.caption;
     const diagramSvg = svgRef.current;
     if (diagramSvg && caption) {
@@ -284,13 +361,7 @@ export function EngineStage({
       ref={svgRef}
       viewBox={`0 0 ${VIEWBOX.width} ${VIEWBOX.height}`}
       role={openPartId ? "img" : "group"}
-      aria-label={
-        openPartId
-          ? openPartId === "escape"
-            ? undefined
-            : getPart(openPartId)?.overviewBlurb
-          : "The Go Engine, cutaway"
-      }
+      aria-label={openPartId ? undefined : "The Go Engine, cutaway"}
     >
       <g ref={cameraRef} dangerouslySetInnerHTML={{ __html: ENGINE_SVG_MARKUP }} />
     </svg>

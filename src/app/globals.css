@@ -225,21 +225,21 @@ svg [role="button"] {
   cursor: pointer;
 }
 
-.escape-compact {
+.part-compact {
   transition: opacity 0.3s ease;
 }
 
-.escape-detail {
+.part-detail {
   opacity: 0;
   transition: opacity 0.3s ease;
   pointer-events: none;
 }
 
-.escape-detail.is-open {
+.part-detail.is-open {
   opacity: 1;
 }
 
-.escape-detail [data-step] {
+.part-detail [data-step] {
   transition: opacity 0.2s ease;
 }
 
