@@ -50,7 +50,12 @@ export const SLICES_DETAIL_TRANSFORM = { x: 800, y: 280, scale: 1 } as const;
  * Camera zoom target per part, in machine coordinates.
  */
 export const PART_ZOOM_RECTS: Record<PartId, Rect> = {
-  parser: { x: 28, y: 6, width: 542, height: 444 },
+  // Width is wider than the content's own bbox (which ends near x570):
+  // the camera is height-constrained here, so the extra width only
+  // shifts the (fixed-scale) framing left, clearing *ast.File/FuncDecl
+  // from the minimap at narrow (~1024-1084 wide) viewports without
+  // changing the vertical "above the housing" placement UI approved.
+  parser: { x: 28, y: 6, width: 680, height: 444 },
   escape: ESCAPE_CAMERA_RECT,
   slices: {
     x: SLICES_DETAIL_TRANSFORM.x + 15,
