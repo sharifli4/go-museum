@@ -36,14 +36,17 @@ function applyAstNodeState(el: SVGElement, created: number, step: number) {
     el.style.opacity = "0.45";
     el.style.strokeDasharray = "3 3";
     el.style.strokeWidth = "1";
+    el.style.stroke = ""; // back to the element's own (muted) stroke attribute
   } else if (created === step) {
     el.style.opacity = "1";
     el.style.strokeDasharray = "none";
     el.style.strokeWidth = "1.5";
+    el.style.stroke = "var(--ink)"; // lock §6.1: current step's node is ink at 1.5px
   } else {
     el.style.opacity = "1";
     el.style.strokeDasharray = "none";
     el.style.strokeWidth = "1";
+    el.style.stroke = ""; // back to the element's own (muted) stroke attribute
   }
 }
 
