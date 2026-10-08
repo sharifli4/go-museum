@@ -39,14 +39,25 @@ export const ESCAPE_CAMERA_RECT: Rect = {
 };
 
 /**
- * Camera zoom target per part, in machine coordinates. Escape zooms onto
- * its detail sub-drawing; parser and slices (not yet steppable in this PR)
- * zoom onto their existing compact art, enlarged.
+ * Where each part's detail sub-drawing sits in the shared 1400×668 space.
+ * Parser reuses the compact art's own coordinates (no transform needed:
+ * its new AST nodes extend that same local space). Slices is freshly
+ * authored and placed in open sheet space below-right of the machine.
+ */
+export const SLICES_DETAIL_TRANSFORM = { x: 800, y: 280, scale: 1 } as const;
+
+/**
+ * Camera zoom target per part, in machine coordinates.
  */
 export const PART_ZOOM_RECTS: Record<PartId, Rect> = {
-  parser: { x: 34, y: 12, width: 376, height: 434 },
+  parser: { x: 28, y: 6, width: 542, height: 444 },
   escape: ESCAPE_CAMERA_RECT,
-  slices: { x: 800, y: 58, width: 390, height: 214 },
+  slices: {
+    x: SLICES_DETAIL_TRANSFORM.x + 15,
+    y: SLICES_DETAIL_TRANSFORM.y + 30,
+    width: 560,
+    height: 230,
+  },
 };
 
 export interface CameraTransform {
