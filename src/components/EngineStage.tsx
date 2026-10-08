@@ -220,14 +220,22 @@ export function EngineStage({
       }
     }
 
-    // Other groups and connecting pipes fade while any part is zoomed in.
+    // Other groups, the bus, the sheet frame, and the grid all fade over
+    // the first 300ms while any part is zoomed in (lock §5.1), and restore
+    // when zooming back out.
     const fadeTargets = svg.querySelectorAll<SVGGElement>(
-      "#locked-scheduler, #locked-gc, #locked-maps, #output, #titleblock, #chassis"
+      "#locked-scheduler, #locked-gc, #locked-maps, #output, #titleblock, #chassis, #bus, #sheetFrame, #grid"
     );
     fadeTargets.forEach((el) => {
       el.style.transition = "opacity 0.3s ease";
       el.style.opacity = openPartId ? "0" : "1";
     });
+
+    // The escape callout leader has its own hover-driven visibility; only
+    // force it off here when zooming in, never force it on when zooming out.
+    if (openPartId) {
+      svg.querySelector<SVGPathElement>("#escapeCalloutLeader")?.classList.remove("is-shown");
+    }
     for (const id of PART_IDS) {
       if (id === openPartId) continue;
       const el = svg.querySelector<SVGGElement>(`#part-${id}`);
