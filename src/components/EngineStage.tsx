@@ -123,6 +123,11 @@ export function EngineStage({
       el.classList.toggle("is-active", isActive);
       el.classList.toggle("dimmed", activeId !== null && !isActive);
     }
+
+    // The escape callout's leader line shows only with that callout, never
+    // on its own and never while a part is zoomed in (lock §4).
+    const leader = svg.querySelector<SVGPathElement>("#escapeCalloutLeader");
+    leader?.classList.toggle("is-shown", activeId === "escape");
   }, [hoveredId, focusedId, openPartId, onActivePartChange]);
 
   // Part groups leave the tab order and stop reacting to pointer input once a

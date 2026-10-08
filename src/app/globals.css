@@ -378,6 +378,17 @@ svg [role="button"] {
   animation: busTravel 6s linear infinite;
 }
 
+/* Leader line from the escape overview callout to its balloon (lock §4);
+   shown only together with that callout, never in a zoomed part view. */
+#escapeCalloutLeader {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+#escapeCalloutLeader.is-shown {
+  opacity: 1;
+}
+
 @keyframes busTravel {
   0% {
     transform: translateX(0);
