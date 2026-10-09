@@ -475,6 +475,18 @@ svg [role="button"] {
   .view {
     grid-template-columns: 1fr 332px;
   }
+  /* At the narrow end of this tier the stage shrinks enough that the
+     escape stage-tag's stack/heap swatches reach under the fixed-size
+     224px minimap (lock §2: no page scroll, everything must fit). */
+  .stage-tag {
+    gap: 10px;
+  }
+  .stage-tag .lbl {
+    font-size: 10px;
+  }
+  .stage-tag .sw {
+    gap: 4px;
+  }
 }
 
 .stage {
