@@ -18,7 +18,8 @@
     "check:escape": "node scripts/check-escape.mjs",
     "check:parser": "node scripts/check-parser.mjs",
     "check:slices": "node scripts/check-slices.mjs",
-    "check:go": "npm run check:escape && npm run check:parser && npm run check:slices"
+    "check:go": "npm run check:escape && npm run check:parser && npm run check:slices",
+    "check:overflow": "node scripts/check-overflow.mjs"
   },
   "dependencies": {
     "framer-motion": "^12.4.0",
@@ -32,6 +33,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.4.0",
+    "playwright": "^1.64.0",
     "typescript": "^5"
   }
 }
