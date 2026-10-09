@@ -67,6 +67,7 @@ export function Overview({
               reducedMotion={reducedMotion}
               cameraRef={cameraRef}
               prevOpenRef={prevOpenRef}
+              skipCameraAnimation
               onOpenPart={onOpenPart}
               onActivePartChange={setActivePartId}
               onLockedAnnounce={setAnnouncement}

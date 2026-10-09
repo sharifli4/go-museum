@@ -19,6 +19,7 @@ interface PartViewProps {
   closing?: boolean;
   cameraRef: MutableRefObject<CameraTransform>;
   prevOpenRef: MutableRefObject<PartId | null>;
+  overviewSheetRef: MutableRefObject<HTMLDivElement | null>;
   onBack: () => void;
   onJumpPart: (id: PartId) => void;
   onReset: () => void;
@@ -44,6 +45,7 @@ export function PartView({
   closing = false,
   cameraRef,
   prevOpenRef,
+  overviewSheetRef,
   onBack,
   onJumpPart,
   onReset,
@@ -118,6 +120,7 @@ export function PartView({
               forceClosing={closing}
               cameraRef={cameraRef}
               prevOpenRef={prevOpenRef}
+              overviewSheetRef={overviewSheetRef}
               onOpenPart={() => {}}
             />
           </div>

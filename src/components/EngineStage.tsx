@@ -30,6 +30,46 @@ const ESCAPE_GATE_ANGLE: Record<number, number> = {
 
 const ESCAPE_CARD_LANDED_FROM_STEP = 5;
 
+/**
+ * Lock §5: closing must land the camera such that "the last reverse frame
+ * equals the first overview frame." The part's `.diagram` box and the
+ * overview's `.ov-sheet` box are different-sized DOM containers for the
+ * same `viewBox="0 0 1400 668"` SVG, so each renders "camera at identity"
+ * at a different effective px-per-viewBox-unit scale (`preserveAspectRatio
+ * ="xMidYMid meet"`'s own fit, entirely outside this camera transform's
+ * control). A flat identity target would leave the content visibly
+ * larger or smaller the instant Overview mounts in its (always wider)
+ * box. Scaling *this* container's camera up or down by the ratio of the
+ * two boxes' meet-scales -- about their shared center, so it stays
+ * centered -- makes this container's content match the overview's real
+ * size before the swap, so the swap itself is invisible.
+ */
+function meetScale(width: number, height: number): number {
+  return Math.min(width / VIEWBOX.width, height / VIEWBOX.height);
+}
+
+function closingTarget(
+  diagramSvg: SVGSVGElement | null,
+  overviewSheet: HTMLDivElement | null | undefined
+): CameraTransform {
+  if (!diagramSvg || !overviewSheet) return IDENTITY_CAMERA;
+  const partBox = diagramSvg.getBoundingClientRect();
+  const overviewBox = overviewSheet.getBoundingClientRect();
+  if (partBox.width <= 0 || partBox.height <= 0 || overviewBox.width <= 0 || overviewBox.height <= 0) {
+    return IDENTITY_CAMERA;
+  }
+  const partScale = meetScale(partBox.width, partBox.height);
+  const overviewScale = meetScale(overviewBox.width, overviewBox.height);
+  const scale = overviewScale / partScale;
+  // Scale about the viewBox's own center so the content stays centered,
+  // matching how `cameraTransformFor` is centered elsewhere in this file.
+  return {
+    x: (VIEWBOX.width / 2) * (1 - scale),
+    y: (VIEWBOX.height / 2) * (1 - scale),
+    scale,
+  };
+}
+
 /** lock §6.1: "current step ink at 1.5px; earlier hairline; later dashed." */
 function applyAstNodeState(el: SVGElement, created: number, step: number) {
   if (created > step) {
@@ -118,6 +158,26 @@ interface EngineStageProps {
    * animating back to the overview framing.
    */
   forceClosing?: boolean;
+  /**
+   * A ref to the overview's `.ov-sheet` box (see OverviewScaleProbe),
+   * read only while `forceClosing`. The overview and a zoomed part's
+   * `.diagram` are different-sized DOM boxes for the same 1400x668
+   * viewBox, so "camera at identity" renders at a different effective
+   * scale in each; the reverse zoom needs this to compute a target that
+   * actually matches the overview's real on-screen scale (lock §5: "the
+   * last reverse frame equals the first overview frame"), not a flat
+   * identity that would still jump the instant the overview mounts.
+   */
+  overviewSheetRef?: MutableRefObject<HTMLDivElement | null>;
+  /**
+   * True only for Overview's own EngineStage instance. Its camera target
+   * is always identity (`openPartId` is always null there) and the only
+   * reason it would otherwise animate is a *leftover* "closing" signal
+   * from the shared refs above (set by the part that was just unmounted,
+   * whose own reverse zoom already finished the whole visual transition)
+   * -- so Overview must just snap to identity, never animate.
+   */
+  skipCameraAnimation?: boolean;
 }
 
 export function EngineStage({
@@ -130,6 +190,8 @@ export function EngineStage({
   cameraRef: sharedCameraRef,
   prevOpenRef: sharedPrevOpenRef,
   forceClosing = false,
+  overviewSheetRef,
+  skipCameraAnimation = false,
 }: EngineStageProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const cameraRef = useRef<SVGGElement>(null);
@@ -253,15 +315,22 @@ export function EngineStage({
   useLayoutEffect(() => {
     const camera = cameraRef.current;
     if (!camera) return;
-    const target: CameraTransform =
-      openPartId && !forceClosing ? cameraTransformForPart(openPartId) : IDENTITY_CAMERA;
+
+    let target: CameraTransform;
+    if (openPartId && !forceClosing) {
+      target = cameraTransformForPart(openPartId);
+    } else if (forceClosing) {
+      target = closingTarget(svgRef.current, overviewSheetRef?.current);
+    } else {
+      target = IDENTITY_CAMERA;
+    }
 
     const setAttr = (c: CameraTransform) => {
       camera.setAttribute("transform", `translate(${c.x} ${c.y}) scale(${c.scale})`);
       sharedCameraRef.current = c;
     };
 
-    if (reducedMotion) {
+    if (reducedMotion || skipCameraAnimation) {
       setAttr(target);
       sharedPrevOpenRef.current = openPartId;
       return;
@@ -283,7 +352,7 @@ export function EngineStage({
     sharedPrevOpenRef.current = openPartId;
     return () => controls.stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openPartId, reducedMotion, forceClosing]);
+  }, [openPartId, reducedMotion, forceClosing, skipCameraAnimation]);
 
   // Every part: compact art fades out, detail art fades in and reacts to
   // the current step (lock §5.4, §6.1-§6.3). Other groups fade during zoom
@@ -294,10 +363,18 @@ export function EngineStage({
     const svg = svgRef.current;
     if (!svg) return;
 
+    // While `forceClosing`, `openPartId` is still the real part (lock §5:
+    // the part stays mounted for the whole 520ms reverse zoom) but
+    // everything in this effect that only cares about "is anything
+    // zoomed in right now" should already be reversing, not waiting for
+    // the eventual unmount to pop back -- bus/grid/locked-parts/siblings
+    // fade back in during the zoom-out, not after it.
+    const zoomedIn = Boolean(openPartId) && !forceClosing;
+
     for (const id of PART_IDS) {
       const partGroup = svg.querySelector<SVGGElement>(`#part-${id}`);
       if (!partGroup) continue;
-      const isOpen = openPartId === id;
+      const isOpen = zoomedIn && openPartId === id;
       const compact = partGroup.querySelector<SVGGElement>(".part-compact");
       const detail = partGroup.querySelector<SVGGElement>(".part-detail");
       if (compact) compact.style.opacity = isOpen ? "0" : "1";
@@ -324,16 +401,16 @@ export function EngineStage({
       el.style.transition = "opacity 0.3s ease";
       // Same rule as above: only force opacity while zoomed in. In the
       // overview, locked groups can still be hover/focus-dimmed via CSS.
-      el.style.opacity = openPartId ? "0" : "";
+      el.style.opacity = zoomedIn ? "0" : "";
     });
 
     // The escape callout leader has its own hover-driven visibility; only
     // force it off here when zooming in, never force it on when zooming out.
-    if (openPartId) {
+    if (zoomedIn) {
       svg.querySelector<SVGPathElement>("#escapeCalloutLeader")?.classList.remove("is-shown");
     }
     for (const id of PART_IDS) {
-      if (id === openPartId) continue;
+      if (zoomedIn && id === openPartId) continue;
       const el = svg.querySelector<SVGGElement>(`#part-${id}`);
       if (!el) continue;
       el.style.transition = "opacity 0.3s ease";
@@ -341,7 +418,7 @@ export function EngineStage({
       // In overview mode, leave inline opacity unset so the hover/focus
       // ".dimmed" class (opacity: .62) controls it instead of always
       // being clobbered back to "1" (lock §4).
-      el.style.opacity = openPartId ? "0" : "";
+      el.style.opacity = zoomedIn ? "0" : "";
     }
 
     if (!openPartId) return;
@@ -384,7 +461,7 @@ export function EngineStage({
     if (diagramSvg && caption) {
       diagramSvg.setAttribute("aria-label", caption);
     }
-  }, [openPartId, currentStep]);
+  }, [openPartId, currentStep, forceClosing]);
 
   return (
     <svg

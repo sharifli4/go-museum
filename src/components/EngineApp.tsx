@@ -3,6 +3,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Overview } from "./Overview";
+import { OverviewScaleProbe } from "./OverviewScaleProbe";
 import { PartView } from "./PartView";
 import { SmallViewportGate } from "./SmallViewportGate";
 import type { Speed } from "./Dock";
@@ -39,6 +40,11 @@ export function EngineApp() {
   // left off instead of jumping straight to the overview on remount.
   const cameraRef = useRef<CameraTransform>(IDENTITY_CAMERA);
   const prevOpenRef = useRef<PartId | null>(null);
+  // See OverviewScaleProbe: lets a closing part's camera compute a
+  // reverse-zoom target that matches the overview's real on-screen scale
+  // (lock §5), even though Overview itself is unmounted for that whole
+  // 520ms.
+  const overviewSheetRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     return () => {
@@ -196,44 +202,48 @@ export function EngineApp() {
   const mode = currentPart ? "part" : "overview";
 
   return (
-    <AnimatePresence initial={false}>
-      <motion.div
-        key={mode}
-        className="app-shell-anim"
-        initial={reducedMotion ? { opacity: 0 } : false}
-        animate={{ opacity: 1 }}
-        exit={reducedMotion ? { opacity: 0 } : { opacity: 1 }}
-        transition={{ duration: reducedMotion ? 0.15 : 0 }}
-      >
-        {currentPart ? (
-          <PartView
-            part={currentPart}
-            stepNumber={step}
-            playing={playing}
-            speed={speed}
-            reducedMotion={reducedMotion}
-            closing={closing}
-            cameraRef={cameraRef}
-            prevOpenRef={prevOpenRef}
-            onBack={closePart}
-            onJumpPart={jumpPart}
-            onReset={reset}
-            onPrev={() => stepBy(-1)}
-            onNext={() => stepBy(1)}
-            onPlayPauseOrReplay={playPauseOrReplay}
-            onJumpStep={goToStep}
-            onSpeedChange={setSpeed}
-          />
-        ) : (
-          <Overview
-            visitedParts={visitedParts}
-            reducedMotion={reducedMotion}
-            cameraRef={cameraRef}
-            prevOpenRef={prevOpenRef}
-            onOpenPart={openPart}
-          />
-        )}
-      </motion.div>
-    </AnimatePresence>
+    <>
+      <OverviewScaleProbe sheetRef={overviewSheetRef} />
+      <AnimatePresence initial={false}>
+        <motion.div
+          key={mode}
+          className="app-shell-anim"
+          initial={reducedMotion ? { opacity: 0 } : false}
+          animate={{ opacity: 1 }}
+          exit={reducedMotion ? { opacity: 0 } : { opacity: 1 }}
+          transition={{ duration: reducedMotion ? 0.15 : 0 }}
+        >
+          {currentPart ? (
+            <PartView
+              part={currentPart}
+              stepNumber={step}
+              playing={playing}
+              speed={speed}
+              reducedMotion={reducedMotion}
+              closing={closing}
+              cameraRef={cameraRef}
+              prevOpenRef={prevOpenRef}
+              overviewSheetRef={overviewSheetRef}
+              onBack={closePart}
+              onJumpPart={jumpPart}
+              onReset={reset}
+              onPrev={() => stepBy(-1)}
+              onNext={() => stepBy(1)}
+              onPlayPauseOrReplay={playPauseOrReplay}
+              onJumpStep={goToStep}
+              onSpeedChange={setSpeed}
+            />
+          ) : (
+            <Overview
+              visitedParts={visitedParts}
+              reducedMotion={reducedMotion}
+              cameraRef={cameraRef}
+              prevOpenRef={prevOpenRef}
+              onOpenPart={openPart}
+            />
+          )}
+        </motion.div>
+      </AnimatePresence>
+    </>
   );
 }
