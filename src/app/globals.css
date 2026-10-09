@@ -903,6 +903,26 @@ svg [role="button"] {
   color: var(--ink);
 }
 
+@media (max-width: 1279px) {
+  /* On the last step the dock swaps Play for the wider "Replay" pill
+     (lock §5.2), which pushes the dock to ~675px -- past the 650px
+     stage at the narrow end of this tier, clipping Reset/Prev or the
+     speed buttons under the stage's `overflow: hidden`. Tightening the
+     gaps and margins around the fixed-size (>=40px) hit areas -- never
+     the hit areas themselves -- claws back enough width to fit. */
+  .dock {
+    gap: 1px;
+    padding: 0 4px;
+  }
+  .dock .vsep {
+    margin: 0 4px;
+  }
+  .dock .play,
+  .dock .replay {
+    margin: 0 2px;
+  }
+}
+
 /* Entrance/leaving animations for the zoomed part's chrome (lock §5):
    the plaque slides in from the right, the dock fades up, the minimap
    fades in; on close the plaque and dock leave over the first 200ms of
