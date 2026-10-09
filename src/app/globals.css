@@ -89,6 +89,15 @@ kbd {
   color: var(--muted);
 }
 
+/* Wraps the overview/part-view switch (lock §8: reduced motion is a
+   150ms crossfade on this swap, not a camera move); absolutely
+   positioned so the outgoing and incoming trees can overlap exactly
+   while both are mounted during that crossfade. */
+.app-shell-anim {
+  position: absolute;
+  inset: 0;
+}
+
 .app-shell {
   display: grid;
   grid-template-rows: 52px 1fr;
@@ -894,11 +903,104 @@ svg [role="button"] {
   color: var(--ink);
 }
 
+/* Entrance/leaving animations for the zoomed part's chrome (lock §5):
+   the plaque slides in from the right, the dock fades up, the minimap
+   fades in; on close the plaque and dock leave over the first 200ms of
+   the 520ms reverse zoom. Reduced motion drops all of it (lock §8:
+   "Plaque and dock appear with it, no slide"). */
+@keyframes plaqueIn {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes dockIn {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes minimapIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes plaqueOut {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+
+@keyframes dockOut {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+}
+
+.mm {
+  animation: minimapIn 320ms cubic-bezier(0.22, 0.8, 0.2, 1) 260ms both;
+}
+
+.dock-wrap .dock {
+  animation: dockIn 320ms cubic-bezier(0.22, 0.8, 0.2, 1) 260ms both;
+}
+
+/*
+ * A CSS *animation*, not a transition: swapping which `animation-name`
+ * applies always plays from that animation's own `from` state, whereas a
+ * transition only animates if the browser painted the differing "before"
+ * value in an earlier frame -- which isn't guaranteed when the "leaving"
+ * class is added on the very same render that would otherwise jump
+ * straight to the final value.
+ */
+.dock-wrap.leaving .dock {
+  animation: dockOut 200ms ease both;
+}
+
+.plaque.leaving {
+  animation: plaqueOut 200ms ease both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mm,
+  .dock-wrap .dock,
+  .dock-wrap.leaving .dock,
+  .plaque,
+  .plaque.leaving {
+    animation: none;
+  }
+}
+
 /* Plaque */
 
 .plaque {
   min-height: 0;
   background: var(--panel);
+  animation: plaqueIn 420ms cubic-bezier(0.22, 0.8, 0.2, 1) 180ms both;
   border: 1px solid var(--hair);
   border-radius: var(--r);
   padding: 20px 22px 18px;

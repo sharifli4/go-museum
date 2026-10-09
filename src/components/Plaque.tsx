@@ -6,29 +6,33 @@ interface PlaqueProps {
   part: Part;
   step: Step;
   totalSteps: number;
+  /** True for the ~520ms the part is zooming back out to the overview. */
+  closing?: boolean;
 }
 
-export function Plaque({ part, step, totalSteps }: PlaqueProps) {
+export function Plaque({ part, step, totalSteps, closing = false }: PlaqueProps) {
   const chipTokens = CHIP_TOKENS[part.id] ?? [];
   const segments = splitCaptionIntoChips(step.caption, chipTokens);
   const nextStep = step.n < totalSteps ? part.steps[step.n] : null;
   const compact = part.lines.length > 9;
 
   return (
-    <aside className="plaque" aria-label="Part plaque">
+    <aside className={`plaque${closing ? " leaving" : ""}`} aria-label="Part plaque">
       <div>
         <div className="p-row">
           <span className="lbl">Part {part.number}</span>
-          <span className="sws lbl">
-            <span>
-              <i className="sw-hatch" aria-hidden="true" />
-              stack
+          {part.id === "escape" && (
+            <span className="sws lbl">
+              <span>
+                <i className="sw-hatch" aria-hidden="true" />
+                stack
+              </span>
+              <span>
+                <i className="sw-solid" aria-hidden="true" />
+                heap
+              </span>
             </span>
-            <span>
-              <i className="sw-solid" aria-hidden="true" />
-              heap
-            </span>
-          </span>
+          )}
         </div>
         <h1>{part.title}</h1>
         <p className="sub">{part.subtitle}</p>

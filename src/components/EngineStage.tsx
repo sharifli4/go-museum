@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from "react";
 import { animate } from "framer-motion";
 import { ENGINE_SVG_MARKUP } from "@/lib/svg/engine-markup";
 import {
@@ -100,6 +100,24 @@ interface EngineStageProps {
   onOpenPart: (id: PartId) => void;
   onActivePartChange?: (id: PartId | null) => void;
   onLockedAnnounce?: (message: string) => void;
+  /**
+   * The overview and the part view each mount their own `<EngineStage>`
+   * (so each can lay its chrome out independently), which would normally
+   * reset the camera on every open/close. These two refs are created once
+   * in EngineApp and passed into both mounts, so the camera's last known
+   * position (and which part was open last) survive the remount and the
+   * reverse zoom on close keeps animating from where the forward zoom
+   * left off instead of jumping straight to the overview (lock §5).
+   */
+  cameraRef: MutableRefObject<CameraTransform>;
+  prevOpenRef: MutableRefObject<PartId | null>;
+  /**
+   * Set by EngineApp for the ~520ms a part is closing (lock §5: "Esc or
+   * '← Engine' reverses it in 520ms"). The part is still mounted and its
+   * `openPartId` prop is still set, but the camera should already be
+   * animating back to the overview framing.
+   */
+  forceClosing?: boolean;
 }
 
 export function EngineStage({
@@ -109,6 +127,9 @@ export function EngineStage({
   onOpenPart,
   onActivePartChange,
   onLockedAnnounce,
+  cameraRef: sharedCameraRef,
+  prevOpenRef: sharedPrevOpenRef,
+  forceClosing = false,
 }: EngineStageProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const cameraRef = useRef<SVGGElement>(null);
@@ -223,28 +244,31 @@ export function EngineStage({
   // transform *attribute* (always in user-space units) rather than a CSS
   // transform, whose `px` lengths are physical pixels and would be scaled
   // incorrectly by the SVG's own viewBox-to-viewport ratio.
-  const currentCameraRef = useRef<CameraTransform>(IDENTITY_CAMERA);
-  const previousOpenRef = useRef<PartId | null>(null);
-  useEffect(() => {
+  //
+  // useLayoutEffect, not useEffect: this mount may be a fresh instance
+  // (Overview and PartView each own one) picking up a camera position
+  // left behind by the instance that was just unmounted. Setting the
+  // attribute before paint avoids a one-frame flash at the identity/old
+  // transform before the animation's first frame lands.
+  useLayoutEffect(() => {
     const camera = cameraRef.current;
     if (!camera) return;
-    const target: CameraTransform = openPartId
-      ? cameraTransformForPart(openPartId)
-      : IDENTITY_CAMERA;
+    const target: CameraTransform =
+      openPartId && !forceClosing ? cameraTransformForPart(openPartId) : IDENTITY_CAMERA;
 
     const setAttr = (c: CameraTransform) => {
       camera.setAttribute("transform", `translate(${c.x} ${c.y}) scale(${c.scale})`);
-      currentCameraRef.current = c;
+      sharedCameraRef.current = c;
     };
 
     if (reducedMotion) {
       setAttr(target);
-      previousOpenRef.current = openPartId;
+      sharedPrevOpenRef.current = openPartId;
       return;
     }
 
-    const start = currentCameraRef.current;
-    const closing = previousOpenRef.current !== null && openPartId === null;
+    const start = sharedCameraRef.current;
+    const closing = forceClosing || (sharedPrevOpenRef.current !== null && openPartId === null);
     const controls = animate(0, 1, {
       duration: closing ? 0.52 : 0.65,
       ease: [0.22, 0.8, 0.2, 1],
@@ -256,9 +280,10 @@ export function EngineStage({
         });
       },
     });
-    previousOpenRef.current = openPartId;
+    sharedPrevOpenRef.current = openPartId;
     return () => controls.stop();
-  }, [openPartId, reducedMotion]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openPartId, reducedMotion, forceClosing]);
 
   // Every part: compact art fades out, detail art fades in and reacts to
   // the current step (lock §5.4, §6.1-§6.3). Other groups fade during zoom

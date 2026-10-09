@@ -1,18 +1,27 @@
 "use client";
 
-import { useState, type CSSProperties } from "react";
+import { useState, type CSSProperties, type MutableRefObject } from "react";
 import { EngineStage } from "./EngineStage";
 import { OverviewCallout } from "./OverviewCallout";
 import { PARTS, getPart } from "@/lib/parts";
+import type { CameraTransform } from "@/lib/geometry";
 import type { PartId } from "@/lib/types";
 
 interface OverviewProps {
   visitedParts: Set<PartId>;
   reducedMotion: boolean;
+  cameraRef: MutableRefObject<CameraTransform>;
+  prevOpenRef: MutableRefObject<PartId | null>;
   onOpenPart: (id: PartId) => void;
 }
 
-export function Overview({ visitedParts, reducedMotion, onOpenPart }: OverviewProps) {
+export function Overview({
+  visitedParts,
+  reducedMotion,
+  cameraRef,
+  prevOpenRef,
+  onOpenPart,
+}: OverviewProps) {
   const [activePartId, setActivePartId] = useState<PartId | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const activePart = activePartId ? getPart(activePartId) : undefined;
@@ -56,6 +65,8 @@ export function Overview({ visitedParts, reducedMotion, onOpenPart }: OverviewPr
               openPartId={null}
               currentStep={1}
               reducedMotion={reducedMotion}
+              cameraRef={cameraRef}
+              prevOpenRef={prevOpenRef}
               onOpenPart={onOpenPart}
               onActivePartChange={setActivePartId}
               onLockedAnnounce={setAnnouncement}
