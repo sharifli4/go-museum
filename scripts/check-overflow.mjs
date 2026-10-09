@@ -1,35 +1,75 @@
 #!/usr/bin/env node
-// Automated regression guard for the class of bug PR 2.1's visual audit
-// found: nominal SVG font-sizes get bumped (e.g. for lock §10's >=11px
-// floor) without widening the boxes/plates/cards the text sits in, so the
-// rendered text silently spills past its container.
+// Automated regression guard for the two classes of visual bug the audits
+// of this PR found:
 //
-// Boots a production server (reusing an existing `.next` build if present,
-// building one otherwise), then for the overview and every step of all
-// three parts, at both 1280x800 and 1024x700, walks every visible <text>
-// in the active SVG and -- for every text whose rendered bbox starts
-// inside some sibling <rect> ("plate/box/card" pattern: a solid fill, not
-// a decorative url(#...) texture, with a visible stroke) -- asserts the
-// text's full bbox stays inside that rect's bbox. Texts with no such
-// containing rect (section labels, balloon numbers, callouts) are free
-// labels and are not checked.
+// 1. Nominal SVG font-sizes get bumped (e.g. for lock §10's >=11px floor)
+//    without widening the boxes/plates/cards the text sits in, so the
+//    rendered text silently spills past its container.
+// 2. Re-spacing one node in a tree (or moving one label) doesn't check
+//    what it now overlaps: a sibling node's box/text, a thick structural
+//    line (a duct/bus/pipe), or a DOM overlay like the minimap or dock.
+//
+// Boots a server (reusing an existing `.next` build if present, `next
+// dev` otherwise, auto-picking a free port so it never has to touch any
+// server this script didn't start itself -- see pickPort()), then for the
+// overview and every step of all three parts, at both 1280x800 and
+// 1024x700, walks every visible <text> and "plate" <rect> (a solid-filled,
+// stroked rect, not a decorative url(#...) texture or an oversized
+// background container) in the active SVG and fails on:
+//   a. a text's rendered bbox escaping the plate/box/card rect it starts
+//      inside of (checked in local SVG user-space via getBBox(), which is
+//      invariant to the current camera zoom/viewport scale);
+//   b. any two visible texts' screen-space rects overlapping each other
+//      (getBoundingClientRect) -- texts should never visually collide,
+//      regardless of DOM relationship ("sibling" or not);
+//   c. any two visible "plate" rects' screen-space rects overlapping each
+//      other (same reasoning, scoped to plate-sized rects so intentionally
+//      nested housings/containers aren't flagged);
+//   d. a visible text's screen-space rect overlapping the *stroke-inflated*
+//      screen-space rect of a thick structural line (stroke-width >= 6:
+//      a duct, bus bar, or pipe, not a 1-1.5px hairline a label is
+//      expected to sit near or on top of);
+//   e. anything in the SVG overlapping the minimap (`.mm`) or dock
+//      (`.dock`) DOM overlays.
 //
 // Usage: npm run check:overflow
 // CI: runs headless via Playwright's bundled Chromium; no system browser
 // or display server needed. If this ever can't run in your CI image
-// (e.g. a locked-down sandbox that blocks spawning a Next.js server),
-// run it locally before merging instead -- `npm run build && npm run
+// (e.g. a locked-down sandbox that blocks spawning a Next.js server), run
+// it locally before merging instead -- `npm run build && npm run
 // check:overflow` -- since it is otherwise self-contained.
-import { execSync, spawn } from "node:child_process";
+//
+// Safety: this script only ever kills the exact server process (by pid,
+// via its own process group) that it itself spawned on the free port it
+// picked. It never searches for or kills processes by name/pattern, so it
+// can't touch an unrelated Next.js (or any other) server already running
+// on your machine.
+import { createServer } from "node:net";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
 import { chromium } from "playwright";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const PORT = Number(process.env.CHECK_OVERFLOW_PORT || 4319);
-const BASE_URL = `http://127.0.0.1:${PORT}`;
-const OTHER_TOLERANCE = 2; // px of slop for anti-aliasing/font-metric rounding
+// px of slop for anti-aliasing/sub-pixel rounding, applied to every
+// screen-space overlap check (b)-(e) below.
+const OVERLAP_TOLERANCE = 1.5;
+// SVG text getBBox() includes a few px of font-metric ascent padding
+// above the visible glyph that every hand-tuned box already accounts
+// for, so check (a)'s top edge needs a looser tolerance than its other
+// three (confirmed empty on a clean run: left/right/bottom overflows are
+// never positive by the couple of px the way top readings are).
+const CONTAINMENT_TOP_TOLERANCE = 4.5;
+const CONTAINMENT_OTHER_TOLERANCE = 2;
+// A "plate/box/card" must be reasonably label-sized, not a big background
+// container (the heap tank, the stack column, a housing panel) that a
+// nearby balloon or callout's text might merely start inside of, or that
+// legitimately nests smaller plates without that being an overlap bug.
+const MAX_PLATE_AREA = 16000;
+// A structural duct/bus/pipe, not a 1-1.5px decorative hairline a label
+// is expected to sit near or cross incidentally.
+const MIN_DUCT_STROKE_WIDTH = 6;
 
 const VIEWPORTS = [
   { width: 1280, height: 800 },
@@ -37,16 +77,6 @@ const VIEWPORTS = [
 ];
 const PARTS = ["parser", "escape", "slices"];
 const TOTAL_STEPS = 9;
-// SVG text getBBox() includes a few px of font-metric ascent padding above
-// the visible glyph that every hand-tuned box already accounts for, so the
-// top edge needs a looser tolerance than the other three (confirmed empty
-// on a clean run: left/right/bottom overflows are never positive by a
-// couple of px the way top readings are).
-const TOP_TOLERANCE = 4.5;
-// A "plate/box/card" must be reasonably label-sized, not a big background
-// container (the heap tank, the stack column, a housing panel) that a
-// nearby balloon or callout's text might merely start inside of.
-const MAX_PLATE_AREA = 16000;
 
 function fail(message) {
   console.error(`\ncheck:overflow FAILED\n${message}\n`);
@@ -57,38 +87,31 @@ function hasBuild() {
   return existsSync(join(root, ".next", "BUILD_ID"));
 }
 
-function killPort() {
-  // Defensive: a prior run that errored out before its `finally` could
-  // run leaves an orphaned `next-server` grandchild (reparented to pid 1;
-  // `npx`/`next start`, the process this script actually spawns and can
-  // kill, is just its short-lived parent) bound to PORT, serving a build
-  // from before this run's source edits -- silently making every check
-  // below pass or fail against stale code. `lsof -i`/`-ti` cannot see
-  // this (confirmed in this sandbox: a real listener on PORT that
-  // `lsof -ti:PORT` reports nothing for) and no `fuser` is installed, so
-  // this matches by process name instead, which is sandbox-agnostic. It
-  // is deliberately broad (any `next-server`/`next start`/`next dev` on
-  // the box, not just on PORT, since the port can't be used as a filter
-  // here) -- fine for this script's own throwaway check server, but if
-  // you have an unrelated Next.js dev server running locally while
-  // running this, expect it to also get killed; just restart it after.
-  for (const pattern of ["next-server", "npx next start", "npx next dev"]) {
-    try {
-      execSync(`pkill -9 -f "${pattern}"`, { stdio: "ignore" });
-    } catch {
-      // pkill exits non-zero when it finds nothing to kill; that's fine.
-    }
-  }
+/** Finds a free TCP port by actually asking the OS for one (port 0),
+ * rather than guessing and risking a collision with something already
+ * running -- so this script never needs to touch any other process to
+ * get a port to itself. */
+function pickPort() {
+  return new Promise((resolve, reject) => {
+    const srv = createServer();
+    srv.once("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
 }
 
-function startServer() {
-  killPort();
+function startServer(port) {
   return new Promise((resolve, reject) => {
     const useBuild = hasBuild();
-    const args = useBuild
-      ? ["next", "start", "-p", String(PORT)]
-      : ["next", "dev", "-p", String(PORT)];
-    console.log(`check:overflow: starting ${useBuild ? "production" : "dev"} server on :${PORT}...`);
+    const args = useBuild ? ["next", "start", "-p", String(port)] : ["next", "dev", "-p", String(port)];
+    console.log(`check:overflow: starting ${useBuild ? "production" : "dev"} server on :${port}...`);
+    // `detached: true` makes this child its own process group leader
+    // (pgid == its own pid); its own children (the `next` wrapper, the
+    // real `next-server`) inherit that same pgid, so killing the group
+    // by *this* pid alone (see `stopServer`) reaches all of them without
+    // ever having to search for or match any other process on the box.
     const child = spawn("npx", args, { cwd: root, stdio: ["ignore", "pipe", "pipe"], detached: true });
     let settled = false;
     const onData = (data) => {
@@ -114,69 +137,114 @@ function startServer() {
   });
 }
 
-async function waitForServer(page, retries = 40) {
+function stopServer(child) {
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // already gone
+    }
+  }
+}
+
+async function waitForServer(page, baseUrl, retries = 40) {
   for (let i = 0; i < retries; i++) {
     try {
-      const res = await page.goto(BASE_URL, { timeout: 2000 });
+      const res = await page.goto(baseUrl, { timeout: 2000 });
       if (res && res.ok()) return;
     } catch {
       // not up yet
     }
     await new Promise((r) => setTimeout(r, 500));
   }
-  throw new Error(`server at ${BASE_URL} never became ready`);
+  throw new Error(`server at ${baseUrl} never became ready`);
 }
 
 /**
- * Runs in-page. For every visible <text> in `rootSelector`'s SVG, finds the
- * nearest sibling <rect> (checked at the text's own parent, then one level
- * up) that is a solid-fill, stroked "plate/box/card" (not a decorative
- * url(#...) texture) and whose bbox contains the text's start point. If
- * found, asserts the text's full bbox is inside that rect's bbox.
+ * Runs in-page. Checks (a)-(e) described in the file header, scoped to
+ * `rootSelector`'s SVG for (a)-(d) and to the whole document for (e).
  */
-function collectOverflows({ rootSelector, sceneLabel, topTolerance, otherTolerance, maxPlateArea }) {
+function collectIssues({ rootSelector, sceneLabel, config }) {
+  const { containmentTopTolerance, containmentOtherTolerance, overlapTolerance, maxPlateArea, minDuctStrokeWidth } = config;
   const svg = document.querySelector(rootSelector);
   if (!svg) return [{ scene: sceneLabel, error: `no element matched ${rootSelector}` }];
 
-  function isPlateRect(rect, rectBox) {
+  const isVisible = (el) => el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+
+  function isPlateRect(rect, localBox) {
     const fill = rect.getAttribute("fill") || "";
     const stroke = rect.getAttribute("stroke") || "";
     if (!fill || fill === "none" || fill.startsWith("url(")) return false;
     if (!stroke || stroke === "none") return false;
-    if (rectBox.width * rectBox.height > maxPlateArea) return false;
+    if (localBox.width * localBox.height > maxPlateArea) return false;
     return true;
   }
 
-  function bboxOf(el) {
+  function localBoxOf(el) {
     const b = el.getBBox();
     return { x: b.x, y: b.y, width: b.width, height: b.height, right: b.x + b.width, bottom: b.y + b.height };
+  }
+
+  function screenRectOf(el) {
+    const r = el.getBoundingClientRect();
+    return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height };
+  }
+
+  /** The screen-space rect of a stroked line/path, inflating its local
+   * (unstroked) geometry by half the stroke-width *before* mapping
+   * through the element's full current transform -- plain
+   * getBoundingClientRect() on an SVG path does not include the stroke
+   * (confirmed: a vertical line's reported width is 0 either way). */
+  function strokedScreenRectOf(el) {
+    const bbox = el.getBBox();
+    const strokeWidth = parseFloat(el.getAttribute("stroke-width") || "1");
+    const ctm = el.getScreenCTM();
+    if (!ctm) return null;
+    const half = strokeWidth / 2;
+    const corners = [
+      [bbox.x - half, bbox.y - half],
+      [bbox.x + bbox.width + half, bbox.y - half],
+      [bbox.x - half, bbox.y + bbox.height + half],
+      [bbox.x + bbox.width + half, bbox.y + bbox.height + half],
+    ].map(([x, y]) => ({ x: ctm.a * x + ctm.c * y + ctm.e, y: ctm.b * x + ctm.d * y + ctm.f }));
+    const xs = corners.map((c) => c.x);
+    const ys = corners.map((c) => c.y);
+    const left = Math.min(...xs);
+    const right = Math.max(...xs);
+    const top = Math.min(...ys);
+    const bottom = Math.max(...ys);
+    return { left, right, top, bottom, width: right - left, height: bottom - top };
+  }
+
+  function rectsOverlap(a, b, tolerance = 0) {
+    return !(
+      a.right - tolerance <= b.left ||
+      a.left + tolerance >= b.right ||
+      a.bottom - tolerance <= b.top ||
+      a.top + tolerance >= b.bottom
+    );
   }
 
   function containsPoint(box, x, y) {
     return x >= box.x && x <= box.right && y >= box.y && y <= box.bottom;
   }
 
-  const texts = [...svg.querySelectorAll("text")];
-  const results = [];
+  const issues = [];
+  const texts = [...svg.querySelectorAll("text")].filter((t) => isVisible(t) && (t.textContent || "").trim());
 
+  // (a) text vs. its containing plate/box/card, in local SVG space.
   for (const text of texts) {
-    if (!text.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) continue;
-    const content = (text.textContent || "").trim();
-    if (!content) continue;
-
-    const textBox = bboxOf(text);
-    // Anchor point: the text's own (pre-anchor) rendered start, robust to
-    // text-anchor start/middle/end since getBBox() already reflects it.
+    const textBox = localBoxOf(text);
     const anchorX = textBox.x + textBox.width / 2;
     const anchorY = textBox.y + textBox.height / 2;
-
     const candidateParents = [text.parentElement, text.parentElement?.parentElement].filter(Boolean);
     let bestRect = null;
     let bestArea = Infinity;
     for (const parent of candidateParents) {
-      const rects = parent.querySelectorAll(":scope > rect");
-      for (const rect of rects) {
-        const rectBox = bboxOf(rect);
+      for (const rect of parent.querySelectorAll(":scope > rect")) {
+        const rectBox = localBoxOf(rect);
         if (!isPlateRect(rect, rectBox)) continue;
         if (!containsPoint(rectBox, anchorX, anchorY)) continue;
         const area = rectBox.width * rectBox.height;
@@ -185,72 +253,171 @@ function collectOverflows({ rootSelector, sceneLabel, topTolerance, otherToleran
           bestRect = rectBox;
         }
       }
-      if (bestRect) break; // prefer the immediate parent's own rects
+      if (bestRect) break;
     }
-
-    if (!bestRect) continue; // free-floating label; nothing to check
-
+    if (!bestRect) continue;
     const overflowLeft = bestRect.x - textBox.x;
     const overflowRight = textBox.right - bestRect.right;
     const overflowTop = bestRect.y - textBox.y;
     const overflowBottom = textBox.bottom - bestRect.bottom;
-    const overflows =
-      overflowLeft > otherTolerance ||
-      overflowRight > otherTolerance ||
-      overflowTop > topTolerance ||
-      overflowBottom > otherTolerance;
-
-    if (overflows) {
-      results.push({
+    if (
+      overflowLeft > containmentOtherTolerance ||
+      overflowRight > containmentOtherTolerance ||
+      overflowTop > containmentTopTolerance ||
+      overflowBottom > containmentOtherTolerance
+    ) {
+      issues.push({
         scene: sceneLabel,
-        text: content,
-        textBox,
-        parentBox: bestRect,
-        overflowLeft: Math.round(overflowLeft * 10) / 10,
-        overflowRight: Math.round(overflowRight * 10) / 10,
-        overflowTop: Math.round(overflowTop * 10) / 10,
-        overflowBottom: Math.round(overflowBottom * 10) / 10,
+        kind: "text-overflows-box",
+        text: text.textContent.trim(),
+        detail: `overflows its box by L${overflowLeft.toFixed(1)} R${overflowRight.toFixed(1)} T${overflowTop.toFixed(1)} B${overflowBottom.toFixed(1)}`,
       });
     }
   }
-  return results;
+
+  // (b) text vs. text, screen space, among "labeled" texts only: a text
+  // that is the *sole* <text> child of its immediate parent, the same
+  // signal a `[data-node]`-tagged AST node or a plate's lone caption
+  // uses. This deliberately excludes multi-line text blocks (a 4-line
+  // code card, a title+subtitle pair sharing one wrapper) whose generous
+  // font-metric bboxes (ascent/descent padding, not just the tight glyph
+  // outline) legitimately brush against each other at normal line
+  // spacing without ever being visually overlapping -- confirmed false
+  // positives on a clean run otherwise.
+  const labeledTexts = texts.filter((t) => t.parentElement?.querySelectorAll(":scope > text").length === 1);
+  const textScreens = labeledTexts.map((t) => ({ el: t, rect: screenRectOf(t) }));
+  for (let i = 0; i < textScreens.length; i++) {
+    for (let j = i + 1; j < textScreens.length; j++) {
+      const a = textScreens[i];
+      const b = textScreens[j];
+      if (rectsOverlap(a.rect, b.rect, overlapTolerance)) {
+        issues.push({
+          scene: sceneLabel,
+          kind: "text-overlaps-text",
+          text: a.el.textContent.trim(),
+          detail: `overlaps "${b.el.textContent.trim()}" on screen`,
+        });
+      }
+    }
+  }
+
+  // (c) plate vs. plate, screen space.
+  const plateRects = [...svg.querySelectorAll("rect")].filter((r) => isVisible(r) && isPlateRect(r, localBoxOf(r)));
+  const plateScreens = plateRects.map((r) => ({ el: r, rect: screenRectOf(r) }));
+  for (let i = 0; i < plateScreens.length; i++) {
+    for (let j = i + 1; j < plateScreens.length; j++) {
+      const a = plateScreens[i];
+      const b = plateScreens[j];
+      if (rectsOverlap(a.rect, b.rect, overlapTolerance)) {
+        issues.push({
+          scene: sceneLabel,
+          kind: "box-overlaps-box",
+          text: `rect@${Math.round(a.rect.left)},${Math.round(a.rect.top)}`,
+          detail: `overlaps rect@${Math.round(b.rect.left)},${Math.round(b.rect.top)} on screen`,
+        });
+      }
+    }
+  }
+
+  // (d) text vs. thick structural lines (ducts/bus bars/pipes). Scoped
+  // to straight segments only (no curve commands in `d`): a curved
+  // pipe's own axis-aligned bbox (the only cheap approximation available
+  // for an arbitrary bezier) can be far larger than where its stroke
+  // actually paints, which produced false positives against curvy decor
+  // pipes nowhere near the text on a clean run; straight ducts/bus bars
+  // (the actual target of this check) don't have that gap. Uses *all*
+  // visible texts, not just "labeled" ones (b) is scoped to -- a free
+  // label like "FROM ENGINE BUS" crossing a duct is exactly must-fix #2.
+  const allTextScreens = texts.map((t) => ({ el: t, rect: screenRectOf(t) }));
+  const ducts = [...svg.querySelectorAll("path, line")].filter((el) => {
+    if (!isVisible(el)) return false;
+    const sw = parseFloat(el.getAttribute("stroke-width") || "0");
+    if (sw < minDuctStrokeWidth) return false;
+    const d = el.getAttribute("d") || "";
+    if (/[CcQqAaSsTt]/.test(d)) return false;
+    return true;
+  });
+  const ductScreens = ducts.map((d) => strokedScreenRectOf(d)).filter(Boolean);
+  for (const { el: text, rect: textRect } of allTextScreens) {
+    for (const ductRect of ductScreens) {
+      if (rectsOverlap(textRect, ductRect, overlapTolerance)) {
+        issues.push({
+          scene: sceneLabel,
+          kind: "text-crosses-duct",
+          text: text.textContent.trim(),
+          detail: `crosses a duct/bus stroke at screen x${Math.round(ductRect.left)}-${Math.round(ductRect.right)}`,
+        });
+      }
+    }
+  }
+
+  // (e) anything in the SVG vs. the minimap/dock DOM overlays.
+  const overlays = [
+    { name: "minimap", el: document.querySelector(".mm") },
+    { name: "dock", el: document.querySelector(".dock") },
+  ].filter((o) => o.el && isVisible(o.el));
+  if (overlays.length > 0) {
+    const svgContentRects = [
+      ...allTextScreens.map(({ el: t, rect }) => ({ label: `text "${t.textContent.trim()}"`, rect })),
+      ...plateRects.map((r) => ({ label: `rect@${Math.round(screenRectOf(r).left)},${Math.round(screenRectOf(r).top)}`, rect: screenRectOf(r) })),
+    ];
+    for (const overlay of overlays) {
+      const overlayRect = screenRectOf(overlay.el);
+      for (const { label, rect } of svgContentRects) {
+        if (rectsOverlap(rect, overlayRect, overlapTolerance)) {
+          issues.push({
+            scene: sceneLabel,
+            kind: "under-overlay",
+            text: label,
+            detail: `sits under the ${overlay.name}`,
+          });
+        }
+      }
+    }
+  }
+
+  return issues;
 }
 
 async function checkScene(page, rootSelector, sceneLabel) {
-  return page.evaluate(collectOverflows, {
+  return page.evaluate(collectIssues, {
     rootSelector,
     sceneLabel,
-    topTolerance: TOP_TOLERANCE,
-    otherTolerance: OTHER_TOLERANCE,
-    maxPlateArea: MAX_PLATE_AREA,
+    config: {
+      containmentTopTolerance: CONTAINMENT_TOP_TOLERANCE,
+      containmentOtherTolerance: CONTAINMENT_OTHER_TOLERANCE,
+      overlapTolerance: OVERLAP_TOLERANCE,
+      maxPlateArea: MAX_PLATE_AREA,
+      minDuctStrokeWidth: MIN_DUCT_STROKE_WIDTH,
+    },
   });
 }
 
 async function run() {
-  const server = await startServer();
+  const port = await pickPort();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const server = await startServer(port);
   let browser;
-  const allFailures = [];
+  const allIssues = [];
   let scenesChecked = 0;
 
   try {
     browser = await chromium.launch();
     const probe = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-    await waitForServer(probe);
+    await waitForServer(probe, baseUrl);
     await probe.close();
 
     for (const viewport of VIEWPORTS) {
       const page = await browser.newPage({ viewport });
-      await page.goto(BASE_URL, { waitUntil: "networkidle" });
+      await page.goto(baseUrl, { waitUntil: "networkidle" });
       await page.waitForTimeout(300);
 
       const sceneTag = `${viewport.width}x${viewport.height}`;
 
-      // Overview.
-      const overviewResults = await checkScene(page, ".ov-sheet svg", `${sceneTag} overview`);
-      allFailures.push(...overviewResults);
+      const overviewIssues = await checkScene(page, ".ov-sheet svg", `${sceneTag} overview`);
+      allIssues.push(...overviewIssues);
       scenesChecked++;
 
-      // Every step of every part.
       for (const part of PARTS) {
         await page.evaluate(
           (id) => document.querySelector(`#part-${id}`)?.dispatchEvent(new MouseEvent("click", { bubbles: true })),
@@ -259,9 +426,15 @@ async function run() {
         await page.waitForTimeout(700);
         for (let step = 1; step <= TOTAL_STEPS; step++) {
           await page.keyboard.press(String(step));
-          await page.waitForTimeout(120);
-          const results = await checkScene(page, ".diagram svg", `${sceneTag} ${part} step${step}`);
-          allFailures.push(...results);
+          // Longer than the data-step opacity transition (0.2s): a
+          // shorter wait caught the outgoing and incoming data-step
+          // groups both partway through their crossfade, which produced
+          // false "overlap" positives between what's really the same
+          // slot's two alternate stylings (e.g. the `u` row's solid vs.
+          // "moved" rects, identical geometry, mid-swap).
+          await page.waitForTimeout(300);
+          const issues = await checkScene(page, ".diagram svg", `${sceneTag} ${part} step${step}`);
+          allIssues.push(...issues);
           scenesChecked++;
         }
         await page.keyboard.press("Escape");
@@ -272,33 +445,21 @@ async function run() {
     }
   } finally {
     if (browser) await browser.close();
-    try {
-      // `detached: true` gave the server its own process group (pgid ==
-      // its own pid); killing that whole group reaches the real
-      // `next-server` grandchild too, not just the `npx` wrapper. Belt
-      // and suspenders: killPort() below catches it by name regardless.
-      process.kill(-server.pid, "SIGKILL");
-    } catch {
-      server.kill();
-    }
-    killPort();
+    stopServer(server);
   }
 
-  if (allFailures.length > 0) {
-    const lines = allFailures.map((f) => {
-      if (f.error) return `  [${f.scene}] ${f.error}`;
-      return (
-        `  [${f.scene}] "${f.text}" overflows its box by ` +
-        `L${f.overflowLeft} R${f.overflowRight} T${f.overflowTop} B${f.overflowBottom} ` +
-        `(text ${JSON.stringify(f.textBox)} vs box ${JSON.stringify(f.parentBox)})`
-      );
+  if (allIssues.length > 0) {
+    const lines = allIssues.map((issue) => {
+      if (issue.error) return `  [${issue.scene}] ${issue.error}`;
+      return `  [${issue.scene}] (${issue.kind}) "${issue.text}" ${issue.detail}`;
     });
-    fail(`${allFailures.length} text(s) overflow their box across ${scenesChecked} scenes:\n${lines.join("\n")}`);
+    fail(`${allIssues.length} issue(s) found across ${scenesChecked} scenes:\n${lines.join("\n")}`);
   }
 
   console.log(
-    `check:overflow OK — every SVG text with a containing plate/box/card fits inside it, ` +
-      `across ${scenesChecked} scenes (overview + all 9 steps x 3 parts, at ${VIEWPORTS.map((v) => `${v.width}x${v.height}`).join(" and ")}).`
+    `check:overflow OK — no text/box overflows, no text-on-text or box-on-box overlaps, ` +
+      `no text crossing a duct/bus, nothing under the minimap or dock, across ${scenesChecked} scenes ` +
+      `(overview + all 9 steps x 3 parts, at ${VIEWPORTS.map((v) => `${v.width}x${v.height}`).join(" and ")}).`
   );
   process.exit(0);
 }
