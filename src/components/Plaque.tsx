@@ -95,6 +95,14 @@ export function Plaque({ part, step, totalSteps }: PlaqueProps) {
         </div>
       )}
 
+      {step.toolingNode && (
+        <div className="tool tool-node" aria-label="AST node">
+          <div className="o hit">
+            go/ast · {step.toolingNode}
+          </div>
+        </div>
+      )}
+
       {nextStep && (
         <div className="upnext">
           <span className="lbl">Next</span>

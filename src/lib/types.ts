@@ -19,6 +19,13 @@ export interface Step {
   hint?: string[];
   /** Index into `hint` (0-based) of the line marked current/active. */
   hintCurrent?: number;
+  /**
+   * Parser/AST only (lock §6.1): "the tooling line names the node, e.g.
+   * go/ast · AssignStmt." A real go/ast node name, verified against
+   * go-check/parser/astdump by scripts/check-parser.mjs. Omit if none
+   * (steps before any node exists yet).
+   */
+  toolingNode?: string;
 }
 
 export interface Part {
