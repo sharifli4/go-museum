@@ -6,6 +6,7 @@
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { PARSER_AST_NODES, astDumpLine } from "../src/lib/parser-ast-nodes.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const parserDir = join(root, "go-check", "parser");
@@ -38,19 +39,11 @@ const lines = output
   .map((l) => l.trim())
   .filter(Boolean);
 
-// Every node name/detail the museum renders (lock §6.1 table + §0) must be
-// a line astdump actually printed from the real parse -- never invented.
-const REQUIRED_LINES = [
-  "*ast.File",
-  "FuncDecl main",
-  "BlockStmt",
-  "AssignStmt :=",
-  "BinaryExpr +",
-  "BasicLit 1",
-  "BasicLit 2",
-  "ExprStmt",
-  "CallExpr",
-];
+// Every node name/detail the museum renders (diagram labels + the
+// go/ast · <Node> tooling line, from the single shared list in
+// src/lib/parser-ast-nodes.mjs) must be a line astdump actually printed
+// from the real parse -- never invented.
+const REQUIRED_LINES = PARSER_AST_NODES.map(astDumpLine);
 
 const missing = REQUIRED_LINES.filter((want) => !lines.includes(want));
 if (missing.length > 0) {

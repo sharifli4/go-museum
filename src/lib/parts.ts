@@ -47,6 +47,7 @@ export const parserPart: Part = {
       codeLine: 4,
       whatMoves: "Arm places two BasicLit nodes",
       caption: "1 and 2 become BasicLit nodes.",
+      toolingNode: "BasicLit",
     },
     {
       n: 5,
@@ -54,6 +55,7 @@ export const parserPart: Part = {
       codeLine: 4,
       whatMoves: "A BinaryExpr node closes over them",
       caption: "+ becomes a BinaryExpr with those two nodes as children.",
+      toolingNode: "BinaryExpr",
     },
     {
       n: 6,
@@ -61,6 +63,7 @@ export const parserPart: Part = {
       codeLine: 4,
       whatMoves: "The line becomes one AssignStmt",
       caption: "The line becomes an AssignStmt with token :=.",
+      toolingNode: "AssignStmt",
     },
     {
       n: 7,
@@ -68,6 +71,7 @@ export const parserPart: Part = {
       codeLine: 5,
       whatMoves: "A second statement node, CallExpr",
       caption: "println(x) is an ExprStmt holding a CallExpr.",
+      toolingNode: "ExprStmt",
     },
     {
       n: 8,
@@ -75,6 +79,7 @@ export const parserPart: Part = {
       codeLine: 3,
       whatMoves: "Both statements hang off one BlockStmt",
       caption: "Both statements hang off the BlockStmt of FuncDecl main.",
+      toolingNode: "BlockStmt",
     },
     {
       n: 9,
@@ -82,6 +87,7 @@ export const parserPart: Part = {
       codeLine: 1,
       whatMoves: "The tree roots at *ast.File; wheel stops",
       caption: "*ast.File is the root. The type checker walks it from here.",
+      toolingNode: "*ast.File",
     },
   ],
 };

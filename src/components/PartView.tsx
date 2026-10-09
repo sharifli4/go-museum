@@ -1,10 +1,12 @@
 "use client";
 
+import type { MutableRefObject } from "react";
 import { EngineStage } from "./EngineStage";
 import { Minimap } from "./Minimap";
 import { Dock, type Speed } from "./Dock";
 import { Plaque } from "./Plaque";
 import { PARTS } from "@/lib/parts";
+import type { CameraTransform } from "@/lib/geometry";
 import type { Part, PartId } from "@/lib/types";
 
 interface PartViewProps {
@@ -13,6 +15,12 @@ interface PartViewProps {
   playing: boolean;
   speed: Speed;
   reducedMotion: boolean;
+  /** True for the ~520ms the part is zooming back out to the overview. */
+  closing?: boolean;
+  cameraRef: MutableRefObject<CameraTransform>;
+  prevOpenRef: MutableRefObject<PartId | null>;
+  overviewSheetRef: MutableRefObject<HTMLDivElement | null>;
+  collapsedStageRef: MutableRefObject<HTMLDivElement | null>;
   onBack: () => void;
   onJumpPart: (id: PartId) => void;
   onReset: () => void;
@@ -35,6 +43,11 @@ export function PartView({
   playing,
   speed,
   reducedMotion,
+  closing = false,
+  cameraRef,
+  prevOpenRef,
+  overviewSheetRef,
+  collapsedStageRef,
   onBack,
   onJumpPart,
   onReset,
@@ -82,31 +95,40 @@ export function PartView({
           </span>
         </div>
       </header>
-      <div className="view">
+      <div className={`view${closing ? " closing" : ""}`}>
         <section className="stage" aria-label="Part cutaway">
           <div className="ticks-x" />
           <div className="ticks-y" />
           <div className="stage-tag">
             <span className="lbl">{SECTION_TAG[part.id]}</span>
-            <span className="lbl sw">
-              <i className="sw-hatch" />
-              stack
-            </span>
-            <span className="lbl sw">
-              <i className="sw-solid" />
-              heap
-            </span>
+            {part.id === "escape" && (
+              <>
+                <span className="lbl sw">
+                  <i className="sw-hatch" />
+                  stack
+                </span>
+                <span className="lbl sw">
+                  <i className="sw-solid" />
+                  heap
+                </span>
+              </>
+            )}
           </div>
           <div className="diagram">
             <EngineStage
               openPartId={part.id}
               currentStep={stepNumber}
               reducedMotion={reducedMotion}
+              forceClosing={closing}
+              cameraRef={cameraRef}
+              prevOpenRef={prevOpenRef}
+              overviewSheetRef={overviewSheetRef}
+              collapsedStageRef={collapsedStageRef}
               onOpenPart={() => {}}
             />
           </div>
-          <Minimap currentId={part.id} onJump={onJumpPart} />
-          <div className="dock-wrap">
+          <Minimap currentId={part.id} onJump={onJumpPart} closing={closing} />
+          <div className={`dock-wrap${closing ? " leaving" : ""}`}>
             <Dock
               step={stepNumber}
               totalSteps={part.steps.length}
@@ -140,7 +162,7 @@ export function PartView({
             </div>
           </div>
         </section>
-        <Plaque part={part} step={step} totalSteps={part.steps.length} />
+        <Plaque part={part} step={step} totalSteps={part.steps.length} closing={closing} />
       </div>
     </div>
   );

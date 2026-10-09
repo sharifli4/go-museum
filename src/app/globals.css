@@ -89,6 +89,15 @@ kbd {
   color: var(--muted);
 }
 
+/* Wraps the overview/part-view switch (lock §8: reduced motion is a
+   150ms crossfade on this swap, not a camera move); absolutely
+   positioned so the outgoing and incoming trees can overlap exactly
+   while both are mounted during that crossfade. */
+.app-shell-anim {
+  position: absolute;
+  inset: 0;
+}
+
 .app-shell {
   display: grid;
   grid-template-rows: 52px 1fr;
@@ -469,11 +478,37 @@ svg [role="button"] {
   padding: 14px;
   min-height: 0;
   height: 100%;
+  /* Matches the camera's own reverse-zoom timing (lock §5: 520ms) --
+     collapsing the plaque column in lockstep with it, not after, means
+     by the time the camera finishes `.diagram`'s own box has already
+     grown to (closely) match what PartViewScaleProbe predicted it would
+     when the camera's target was computed, instead of staying narrower
+     and still cropping content the overview would show. */
+  transition: grid-template-columns 520ms cubic-bezier(0.22, 0.8, 0.2, 1);
+}
+
+/* Two classes beats the plain `.view` rule above (and the narrower-tier
+   `.view` override below) regardless of source order, so this doesn't
+   need to be repeated inside that media query. */
+.view.closing {
+  grid-template-columns: 1fr 0px;
 }
 
 @media (max-width: 1279px) {
   .view {
     grid-template-columns: 1fr 332px;
+  }
+  /* At the narrow end of this tier the stage shrinks enough that the
+     escape stage-tag's stack/heap swatches reach under the fixed-size
+     224px minimap (lock §2: no page scroll, everything must fit). */
+  .stage-tag {
+    gap: 10px;
+  }
+  .stage-tag .lbl {
+    font-size: 10px;
+  }
+  .stage-tag .sw {
+    gap: 4px;
   }
 }
 
@@ -604,7 +639,7 @@ svg [role="button"] {
   justify-content: space-between;
   padding: 0 10px 7px;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--muted);
 }
 
@@ -882,11 +917,132 @@ svg [role="button"] {
   color: var(--ink);
 }
 
+@media (max-width: 1279px) {
+  /* On the last step the dock swaps Play for the wider "Replay" pill
+     (lock §5.2), which pushes the dock to ~675px -- past the 650px
+     stage at the narrow end of this tier, clipping Reset/Prev or the
+     speed buttons under the stage's `overflow: hidden`. Tightening the
+     gaps and margins around the fixed-size (>=40px) hit areas -- never
+     the hit areas themselves -- claws back enough width to fit. */
+  .dock {
+    gap: 1px;
+    padding: 0 4px;
+  }
+  .dock .vsep {
+    margin: 0 4px;
+  }
+  .dock .play,
+  .dock .replay {
+    margin: 0 2px;
+  }
+}
+
+/* Entrance/leaving animations for the zoomed part's chrome (lock §5):
+   the plaque slides in from the right, the dock fades up, the minimap
+   fades in; on close the plaque and dock leave over the first 200ms of
+   the 520ms reverse zoom. Reduced motion drops all of it (lock §8:
+   "Plaque and dock appear with it, no slide"). */
+@keyframes plaqueIn {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes dockIn {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes minimapIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes plaqueOut {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+
+@keyframes dockOut {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+}
+
+@keyframes minimapOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.mm {
+  animation: minimapIn 320ms cubic-bezier(0.22, 0.8, 0.2, 1) 260ms both;
+}
+
+/* Without this, the minimap (unlike the plaque and dock) had no "leaving"
+   state at all and just popped away instantly at the eventual unmount --
+   which would also unfairly inflate a last-reverse-frame-vs-first-
+   overview-frame pixel diff, since the overview never had a minimap to
+   begin with. */
+.mm.leaving {
+  animation: minimapOut 200ms ease both;
+}
+
+.dock-wrap .dock {
+  animation: dockIn 320ms cubic-bezier(0.22, 0.8, 0.2, 1) 260ms both;
+}
+
+/*
+ * A CSS *animation*, not a transition: swapping which `animation-name`
+ * applies always plays from that animation's own `from` state, whereas a
+ * transition only animates if the browser painted the differing "before"
+ * value in an earlier frame -- which isn't guaranteed when the "leaving"
+ * class is added on the very same render that would otherwise jump
+ * straight to the final value.
+ */
+.dock-wrap.leaving .dock {
+  animation: dockOut 200ms ease both;
+}
+
+.plaque.leaving {
+  animation: plaqueOut 200ms ease both;
+}
+
 /* Plaque */
 
 .plaque {
   min-height: 0;
   background: var(--panel);
+  animation: plaqueIn 420ms cubic-bezier(0.22, 0.8, 0.2, 1) 180ms both;
   border: 1px solid var(--hair);
   border-radius: var(--r);
   padding: 20px 22px 18px;
@@ -894,6 +1050,22 @@ svg [role="button"] {
   flex-direction: column;
   gap: 16px;
   overflow: hidden;
+}
+
+/* This must come after every rule above that sets `animation` on these
+   selectors (not just the ones defined nearby): equal-specificity CSS
+   rules are resolved by *source order*, so a reduced-motion override
+   placed before e.g. the `.plaque { animation: plaqueIn ... }` rule
+   above would lose to it and the plaque would still slide in. */
+@media (prefers-reduced-motion: reduce) {
+  .mm,
+  .mm.leaving,
+  .dock-wrap .dock,
+  .dock-wrap.leaving .dock,
+  .plaque,
+  .plaque.leaving {
+    animation: none;
+  }
 }
 
 .p-row {
@@ -1087,6 +1259,51 @@ code.i {
   }
   .upnext {
     display: none;
+  }
+}
+
+/* Below ~760px tall even the compact tier above still pushes the tool
+   block (the compiler diagnostic) past the plaque's bottom edge -- shrink
+   every section further so it fits with no internal scroll (lock §2: no
+   page/stage scroll at 1024-1279 wide, height >= 700). */
+@media (max-height: 760px) {
+  .plaque {
+    gap: 8px;
+    padding: 13px 18px 11px;
+  }
+  .p-row {
+    font-size: 10px;
+  }
+  .plaque h1 {
+    font-size: 18px;
+    margin-top: 3px;
+  }
+  .plaque .sub {
+    font-size: 12.5px;
+    margin-top: 2px;
+  }
+  .caption {
+    padding-top: 8px;
+  }
+  .caption .lbl {
+    font-size: 10px;
+  }
+  .caption p {
+    font-size: 13.5px;
+    line-height: 1.35;
+    margin-top: 5px;
+  }
+  .code-h {
+    height: 26px;
+  }
+  .code pre {
+    font-size: 11.5px;
+    line-height: 16px;
+    padding: 3px 0;
+  }
+  .tool {
+    font-size: 10.5px;
+    line-height: 1.35;
   }
 }
 

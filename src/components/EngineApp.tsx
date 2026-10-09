@@ -1,17 +1,23 @@
 "use client";
 
+import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Overview } from "./Overview";
+import { OverviewScaleProbe } from "./OverviewScaleProbe";
 import { PartView } from "./PartView";
+import { PartViewScaleProbe } from "./PartViewScaleProbe";
 import { SmallViewportGate } from "./SmallViewportGate";
 import type { Speed } from "./Dock";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useViewportGate } from "@/hooks/useViewportGate";
 import { getPart, nextOpenPart, prevOpenPart } from "@/lib/parts";
+import { IDENTITY_CAMERA, type CameraTransform } from "@/lib/geometry";
 import type { PartId } from "@/lib/types";
 
 const DWELL_MS: Record<Speed, number> = { 0.5: 8000, 1: 4000, 2: 2000 };
 const TOTAL_STEPS = 9;
+/** Lock §5: "Esc or '← Engine' reverses it in 520ms." */
+const CLOSE_MS = 520;
 
 export function EngineApp() {
   const reducedMotion = useReducedMotion();
@@ -22,8 +28,39 @@ export function EngineApp() {
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState<Speed>(1);
   const [visitedParts, setVisitedParts] = useState<Set<PartId>>(new Set());
+  // Closing is a part view fading out over CLOSE_MS while its camera
+  // reverse-zooms (lock §5); openPartId only flips to null once that
+  // finishes, so PartView (and its one EngineStage) stays mounted for the
+  // whole 520ms instead of being swapped out instantly.
+  const [closing, setClosing] = useState(false);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Shared across every EngineStage mount (Overview's and PartView's each
+  // own one): the camera's last known position and which part was open
+  // last, so a zoom reversal keeps animating from where the forward zoom
+  // left off instead of jumping straight to the overview on remount.
+  const cameraRef = useRef<CameraTransform>(IDENTITY_CAMERA);
+  const prevOpenRef = useRef<PartId | null>(null);
+  // See OverviewScaleProbe: lets a closing part's camera compute a
+  // reverse-zoom target that matches the overview's real on-screen scale
+  // (lock §5), even though Overview itself is unmounted for that whole
+  // 520ms.
+  const overviewSheetRef = useRef<HTMLDivElement | null>(null);
+  // See PartViewScaleProbe: lets a closing part's camera compute what its
+  // own `.diagram` box will be once the plaque column collapses, which
+  // `.view.closing` (globals.css) drives in lockstep with that same
+  // 520ms, instead of its live (plaque-still-present, narrower) box.
+  const collapsedStageRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    };
+  }, []);
 
   const openPart = useCallback((id: PartId) => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    setClosing(false);
     setOpenPartId(id);
     setStep(1);
     setPlaying(false);
@@ -35,11 +72,26 @@ export function EngineApp() {
   }, []);
 
   const closePart = useCallback(() => {
-    setOpenPartId(null);
     setPlaying(false);
-  }, []);
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    if (reducedMotion) {
+      // Lock §8: "Zoom in/out is a 150ms crossfade, not a camera move."
+      // -- an instant state flip, crossfaded by the AnimatePresence wrap
+      // below, with no 520ms reverse-zoom stagger.
+      setOpenPartId(null);
+      setClosing(false);
+      return;
+    }
+    setClosing(true);
+    closeTimerRef.current = setTimeout(() => {
+      setOpenPartId(null);
+      setClosing(false);
+    }, CLOSE_MS);
+  }, [reducedMotion]);
 
   const jumpPart = useCallback((id: PartId) => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    setClosing(false);
     setOpenPartId(id);
     setStep(1);
     setPlaying(false);
@@ -149,26 +201,57 @@ export function EngineApp() {
   if (gated) return <SmallViewportGate />;
 
   const currentPart = openPartId ? getPart(openPartId) : undefined;
+  // Keyed by *mode*, not by which part: jumping directly between open
+  // parts (Shift+arrow, minimap) must not retrigger this crossfade or
+  // remount EngineStage, only closing back to the overview (or opening
+  // from it) should.
+  const mode = currentPart ? "part" : "overview";
 
-  if (currentPart) {
-    return (
-      <PartView
-        part={currentPart}
-        stepNumber={step}
-        playing={playing}
-        speed={speed}
-        reducedMotion={reducedMotion}
-        onBack={closePart}
-        onJumpPart={jumpPart}
-        onReset={reset}
-        onPrev={() => stepBy(-1)}
-        onNext={() => stepBy(1)}
-        onPlayPauseOrReplay={playPauseOrReplay}
-        onJumpStep={goToStep}
-        onSpeedChange={setSpeed}
-      />
-    );
-  }
-
-  return <Overview visitedParts={visitedParts} reducedMotion={reducedMotion} onOpenPart={openPart} />;
+  return (
+    <>
+      <OverviewScaleProbe sheetRef={overviewSheetRef} />
+      <PartViewScaleProbe stageRef={collapsedStageRef} />
+      <AnimatePresence initial={false}>
+        <motion.div
+          key={mode}
+          className="app-shell-anim"
+          initial={reducedMotion ? { opacity: 0 } : false}
+          animate={{ opacity: 1 }}
+          exit={reducedMotion ? { opacity: 0 } : { opacity: 1 }}
+          transition={{ duration: reducedMotion ? 0.15 : 0 }}
+        >
+          {currentPart ? (
+            <PartView
+              part={currentPart}
+              stepNumber={step}
+              playing={playing}
+              speed={speed}
+              reducedMotion={reducedMotion}
+              closing={closing}
+              cameraRef={cameraRef}
+              prevOpenRef={prevOpenRef}
+              overviewSheetRef={overviewSheetRef}
+              collapsedStageRef={collapsedStageRef}
+              onBack={closePart}
+              onJumpPart={jumpPart}
+              onReset={reset}
+              onPrev={() => stepBy(-1)}
+              onNext={() => stepBy(1)}
+              onPlayPauseOrReplay={playPauseOrReplay}
+              onJumpStep={goToStep}
+              onSpeedChange={setSpeed}
+            />
+          ) : (
+            <Overview
+              visitedParts={visitedParts}
+              reducedMotion={reducedMotion}
+              cameraRef={cameraRef}
+              prevOpenRef={prevOpenRef}
+              onOpenPart={openPart}
+            />
+          )}
+        </motion.div>
+      </AnimatePresence>
+    </>
+  );
 }

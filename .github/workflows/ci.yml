@@ -29,6 +29,12 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Overflow check (text/box overflow, sibling overlap, duct crossing, minimap/dock overlap, at 1280x800 and 1024x700)
+        run: npm run check:overflow
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
