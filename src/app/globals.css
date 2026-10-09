@@ -1005,16 +1005,6 @@ svg [role="button"] {
   animation: plaqueOut 200ms ease both;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .mm,
-  .dock-wrap .dock,
-  .dock-wrap.leaving .dock,
-  .plaque,
-  .plaque.leaving {
-    animation: none;
-  }
-}
-
 /* Plaque */
 
 .plaque {
@@ -1028,6 +1018,21 @@ svg [role="button"] {
   flex-direction: column;
   gap: 16px;
   overflow: hidden;
+}
+
+/* This must come after every rule above that sets `animation` on these
+   selectors (not just the ones defined nearby): equal-specificity CSS
+   rules are resolved by *source order*, so a reduced-motion override
+   placed before e.g. the `.plaque { animation: plaqueIn ... }` rule
+   above would lose to it and the plaque would still slide in. */
+@media (prefers-reduced-motion: reduce) {
+  .mm,
+  .dock-wrap .dock,
+  .dock-wrap.leaving .dock,
+  .plaque,
+  .plaque.leaving {
+    animation: none;
+  }
 }
 
 .p-row {
