@@ -322,7 +322,9 @@ export function EngineStage({
     );
     fadeTargets.forEach((el) => {
       el.style.transition = "opacity 0.3s ease";
-      el.style.opacity = openPartId ? "0" : "1";
+      // Same rule as above: only force opacity while zoomed in. In the
+      // overview, locked groups can still be hover/focus-dimmed via CSS.
+      el.style.opacity = openPartId ? "0" : "";
     });
 
     // The escape callout leader has its own hover-driven visibility; only
@@ -333,10 +335,13 @@ export function EngineStage({
     for (const id of PART_IDS) {
       if (id === openPartId) continue;
       const el = svg.querySelector<SVGGElement>(`#part-${id}`);
-      if (el) {
-        el.style.transition = "opacity 0.3s ease";
-        el.style.opacity = openPartId ? "0" : "1";
-      }
+      if (!el) continue;
+      el.style.transition = "opacity 0.3s ease";
+      // Only force an inline opacity while a part is actually zoomed in.
+      // In overview mode, leave inline opacity unset so the hover/focus
+      // ".dimmed" class (opacity: .62) controls it instead of always
+      // being clobbered back to "1" (lock §4).
+      el.style.opacity = openPartId ? "0" : "";
     }
 
     if (!openPartId) return;
