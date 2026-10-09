@@ -25,10 +25,11 @@ export function chipTokensFor(tokens: readonly string[]): RegExp {
     .map((t) => {
       if (!isWordy(t)) return escapeRegExp(t);
       // The slices part's only one-letter identifier is `a`, which also
-      // collides with the English indefinite article ("a backing array"
-      // in the step 2 caption). Exclude that one known phrase so the
-      // article is never chipped, without needing a per-step token list.
-      const guard = t === "a" ? "(?!\\s+backing)" : "";
+      // collides with the English indefinite article: "a backing array"
+      // in step 2's caption and "allocates a new array" in step 8's.
+      // Exclude those two known phrases so the article is never chipped,
+      // without needing a per-step token list.
+      const guard = t === "a" ? "(?!\\s+(?:backing|new)\\b)" : "";
       return `\\b${escapeRegExp(t)}\\b${guard}`;
     })
     .join("|");
