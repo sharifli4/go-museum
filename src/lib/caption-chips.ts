@@ -22,7 +22,15 @@ function isWordy(token: string): boolean {
 export function chipTokensFor(tokens: readonly string[]): RegExp {
   const sorted = [...tokens].sort((a, b) => b.length - a.length);
   const pattern = sorted
-    .map((t) => (isWordy(t) ? `\\b${escapeRegExp(t)}\\b` : escapeRegExp(t)))
+    .map((t) => {
+      if (!isWordy(t)) return escapeRegExp(t);
+      // The slices part's only one-letter identifier is `a`, which also
+      // collides with the English indefinite article ("a backing array"
+      // in the step 2 caption). Exclude that one known phrase so the
+      // article is never chipped, without needing a per-step token list.
+      const guard = t === "a" ? "(?!\\s+backing)" : "";
+      return `\\b${escapeRegExp(t)}\\b${guard}`;
+    })
     .join("|");
   return new RegExp(pattern, "g");
 }
@@ -50,6 +58,7 @@ export const CHIP_TOKENS: Record<string, readonly string[]> = {
   parser: [
     "println(x)",
     "*ast.File",
+    "FuncDecl main",
     "AssignStmt",
     "BinaryExpr",
     "BasicLit",
@@ -60,7 +69,21 @@ export const CHIP_TOKENS: Record<string, readonly string[]> = {
     ":=",
     "main",
     "x",
+    "1",
+    "2",
+    "+",
   ],
-  escape: ["println(p.Name)", "return &u", "p.Name", "newUser", "&u", "ret", "main", "u", "p"],
-  slices: [],
+  escape: [
+    "println(p.Name)",
+    "return &u",
+    "p.Name",
+    "newUser",
+    "User",
+    "&u",
+    "ret",
+    "main",
+    "u",
+    "p",
+  ],
+  slices: ["b := a[:2]", "b[0] = 9", "append(b, 4)", "[1 2 3]", "[9 2 4]", "a", "b", "c"],
 };
