@@ -6,6 +6,8 @@ import type { PartId } from "@/lib/types";
 interface MinimapProps {
   currentId: PartId;
   onJump: (id: PartId) => void;
+  /** True for the ~520ms the part is zooming back out to the overview. */
+  closing?: boolean;
 }
 
 const OPEN_SHAPES: Record<PartId, { rects: Array<[number, number, number, number, number?]>; circles?: Array<[number, number, number]> }> = {
@@ -22,12 +24,12 @@ const LOCKED_SHAPES: Array<{ rect: [number, number, number, number] }> = [
   { rect: [1040, 380, 160, 96] },
 ];
 
-export function Minimap({ currentId, onJump }: MinimapProps) {
+export function Minimap({ currentId, onJump, closing = false }: MinimapProps) {
   const prev = prevOpenPart(currentId);
   const next = nextOpenPart(currentId);
 
   return (
-    <div className="mm">
+    <div className={`mm${closing ? " leaving" : ""}`}>
       <div className="mm-h">
         <span className="lbl">Engine map</span>
         <span className="nav">

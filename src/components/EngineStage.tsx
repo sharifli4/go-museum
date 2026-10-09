@@ -32,41 +32,91 @@ const ESCAPE_CARD_LANDED_FROM_STEP = 5;
 
 /**
  * Lock §5: closing must land the camera such that "the last reverse frame
- * equals the first overview frame." The part's `.diagram` box and the
- * overview's `.ov-sheet` box are different-sized DOM containers for the
+ * equals the first overview frame" in position, scale, *and* crop. The
+ * part's `.diagram` box and the overview's `.ov-sheet` box are
+ * different-sized DOM containers, at different screen positions, for the
  * same `viewBox="0 0 1400 668"` SVG, so each renders "camera at identity"
- * at a different effective px-per-viewBox-unit scale (`preserveAspectRatio
- * ="xMidYMid meet"`'s own fit, entirely outside this camera transform's
- * control). A flat identity target would leave the content visibly
- * larger or smaller the instant Overview mounts in its (always wider)
- * box. Scaling *this* container's camera up or down by the ratio of the
- * two boxes' meet-scales -- about their shared center, so it stays
- * centered -- makes this container's content match the overview's real
- * size before the swap, so the swap itself is invisible.
+ * at a different effective px-per-viewBox-unit scale *and* a different
+ * screen origin (`preserveAspectRatio="xMidYMid meet"`'s own fit,
+ * entirely outside this camera transform's control). Scaling about the
+ * viewBox's own center alone (an earlier version of this function) only
+ * fixes the scale: the two boxes' *centers* aren't at the same screen
+ * position either (the part's box shares its row with the plaque column,
+ * shifting its center well left of where the overview's, which spans the
+ * full row, sits), leaving a residual sideways-and-down translation jump
+ * at the swap.
+ *
+ * Fixes both by computing the full affine map from viewBox-space to
+ * screen-space for each box (`viewBoxOrigin`: the "meet" scale plus the
+ * screen position its own letterboxed origin -- viewBox point (0,0) --
+ * lands at) and solving for the camera's `{scale, x, y}` that makes the
+ * part box's map equal the overview box's map for every point:
+ *
+ *   screenPos = partOrigin + partScale * (cameraScale * P + cameraTranslate)
+ *             = overviewOrigin + overviewScale * P   for all P
+ *
+ * which gives `cameraScale = overviewScale / partScale` (unchanged) and
+ * `cameraTranslate = (overviewOrigin - partOrigin) / partScale` (new).
+ *
+ * `partRect` must be the box the part's `.diagram` will have *once the
+ * plaque column is collapsed* (see `.view.closing` in globals.css, which
+ * EngineApp drives in lockstep with this camera animation) -- not
+ * `.diagram`'s own live rect while the plaque still occupies it, which
+ * would still leave the final frame cropped narrower than the overview's.
+ * `PartViewScaleProbe` measures that collapsed box continuously (always
+ * mounted, invisible) so it's available the instant closing starts.
  */
 function meetScale(width: number, height: number): number {
   return Math.min(width / VIEWBOX.width, height / VIEWBOX.height);
 }
 
+interface ScreenRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+function viewBoxOrigin(rect: ScreenRect) {
+  const scale = meetScale(rect.width, rect.height);
+  return {
+    scale,
+    x: rect.left + (rect.width - VIEWBOX.width * scale) / 2,
+    y: rect.top + (rect.height - VIEWBOX.height * scale) / 2,
+  };
+}
+
+/** `.diagram`'s fixed inset within `.stage` (lock §5.2: "inset 46px 24px
+ * 112px 24px so the dock never covers it"), in CSS `inset` order. */
+const DIAGRAM_INSET = { top: 46, right: 24, bottom: 112, left: 24 };
+
+function diagramRectFromStage(stageRect: ScreenRect): ScreenRect | null {
+  const width = stageRect.width - DIAGRAM_INSET.left - DIAGRAM_INSET.right;
+  const height = stageRect.height - DIAGRAM_INSET.top - DIAGRAM_INSET.bottom;
+  if (width <= 0 || height <= 0) return null;
+  return { left: stageRect.left + DIAGRAM_INSET.left, top: stageRect.top + DIAGRAM_INSET.top, width, height };
+}
+
 function closingTarget(
-  diagramSvg: SVGSVGElement | null,
-  overviewSheet: HTMLDivElement | null | undefined
+  collapsedStage: HTMLElement | null | undefined,
+  overviewSheet: HTMLElement | null | undefined
 ): CameraTransform {
-  if (!diagramSvg || !overviewSheet) return IDENTITY_CAMERA;
-  const partBox = diagramSvg.getBoundingClientRect();
+  if (!collapsedStage || !overviewSheet) return IDENTITY_CAMERA;
+  const stageBox = collapsedStage.getBoundingClientRect();
   const overviewBox = overviewSheet.getBoundingClientRect();
-  if (partBox.width <= 0 || partBox.height <= 0 || overviewBox.width <= 0 || overviewBox.height <= 0) {
+  if (stageBox.width <= 0 || stageBox.height <= 0 || overviewBox.width <= 0 || overviewBox.height <= 0) {
     return IDENTITY_CAMERA;
   }
-  const partScale = meetScale(partBox.width, partBox.height);
-  const overviewScale = meetScale(overviewBox.width, overviewBox.height);
-  const scale = overviewScale / partScale;
-  // Scale about the viewBox's own center so the content stays centered,
-  // matching how `cameraTransformFor` is centered elsewhere in this file.
+  const partRect = diagramRectFromStage(stageBox);
+  if (!partRect) return IDENTITY_CAMERA;
+
+  const part = viewBoxOrigin(partRect);
+  const overview = viewBoxOrigin(overviewBox);
+  const scale = overview.scale / part.scale;
   return {
-    x: (VIEWBOX.width / 2) * (1 - scale),
-    y: (VIEWBOX.height / 2) * (1 - scale),
     scale,
+    x: (overview.x - part.x) / part.scale,
+    y: (overview.y - part.y) / part.scale,
   };
 }
 
@@ -170,6 +220,15 @@ interface EngineStageProps {
    */
   overviewSheetRef?: MutableRefObject<HTMLDivElement | null>;
   /**
+   * A ref to the "collapsed" (plaque-column-at-0) `.stage` box (see
+   * PartViewScaleProbe), read only while `forceClosing`, to compute what
+   * `.diagram`'s own box will be once `.view.closing`'s grid-column
+   * collapse finishes -- not `.diagram`'s live box while the plaque
+   * still occupies that column, which would still leave the final
+   * reverse frame cropped narrower than the overview will be.
+   */
+  collapsedStageRef?: MutableRefObject<HTMLDivElement | null>;
+  /**
    * True only for Overview's own EngineStage instance. Its camera target
    * is always identity (`openPartId` is always null there) and the only
    * reason it would otherwise animate is a *leftover* "closing" signal
@@ -191,6 +250,7 @@ export function EngineStage({
   prevOpenRef: sharedPrevOpenRef,
   forceClosing = false,
   overviewSheetRef,
+  collapsedStageRef,
   skipCameraAnimation = false,
 }: EngineStageProps) {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -200,6 +260,19 @@ export function EngineStage({
 
   const onOpenPartRef = useLatestRef(onOpenPart);
   const onLockedAnnounceRef = useLatestRef(onLockedAnnounce);
+  // Pending "finish hiding the detail layer" timeouts, keyed by part id
+  // (see the compact/detail crossfade effect below).
+  const detailHideTimers = useRef<Partial<Record<PartId, ReturnType<typeof setTimeout>>>>({});
+  useEffect(() => {
+    // The ref object itself is stable for this component's lifetime (only
+    // its properties get mutated by the effect below); capturing it here
+    // still reads whatever's pending *at unmount time* once read through,
+    // since `timers` and `detailHideTimers.current` are the same object.
+    const timers = detailHideTimers.current;
+    return () => {
+      for (const timer of Object.values(timers)) clearTimeout(timer);
+    };
+  }, []);
 
   // Wire part/locked group interactivity once; the SVG markup never changes.
   useEffect(() => {
@@ -320,7 +393,7 @@ export function EngineStage({
     if (openPartId && !forceClosing) {
       target = cameraTransformForPart(openPartId);
     } else if (forceClosing) {
-      target = closingTarget(svgRef.current, overviewSheetRef?.current);
+      target = closingTarget(collapsedStageRef?.current, overviewSheetRef?.current);
     } else {
       target = IDENTITY_CAMERA;
     }
@@ -379,14 +452,32 @@ export function EngineStage({
       const detail = partGroup.querySelector<SVGGElement>(".part-detail");
       if (compact) compact.style.opacity = isOpen ? "0" : "1";
       if (detail) {
-        // `display: none` (not just opacity) when closed, so these larger
-        // sub-drawings never inflate the part's hoverable/hit-test bbox.
+        const pendingHide = detailHideTimers.current[id];
+        if (pendingHide) {
+          clearTimeout(pendingHide);
+          delete detailHideTimers.current[id];
+        }
         if (isOpen) {
           detail.style.display = "";
           requestAnimationFrame(() => detail.classList.add("is-open"));
         } else {
+          // Crossfade to the compact art, don't pop straight to it: drop
+          // the `.is-open` class so `.part-detail`'s own CSS transition
+          // (opacity 1 -> 0 over 300ms) actually plays, matching compact
+          // fading up over the same window. `display: none` (so these
+          // larger sub-drawings never inflate the part's hoverable/
+          // hit-test bbox once hidden) has to wait for that transition to
+          // finish -- setting it in this same tick, as a previous version
+          // of this effect did, skips the transition entirely (there's no
+          // visual effect of animating a property on an element about to
+          // stop rendering) and the whole detail drawing -- while the
+          // camera is still showing it zoomed in, right at the start of
+          // the reverse zoom -- just vanishes instantly.
           detail.classList.remove("is-open");
-          detail.style.display = "none";
+          detailHideTimers.current[id] = setTimeout(() => {
+            detail.style.display = "none";
+            delete detailHideTimers.current[id];
+          }, 300);
         }
       }
     }

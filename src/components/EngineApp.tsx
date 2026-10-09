@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Overview } from "./Overview";
 import { OverviewScaleProbe } from "./OverviewScaleProbe";
 import { PartView } from "./PartView";
+import { PartViewScaleProbe } from "./PartViewScaleProbe";
 import { SmallViewportGate } from "./SmallViewportGate";
 import type { Speed } from "./Dock";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
@@ -45,6 +46,11 @@ export function EngineApp() {
   // (lock §5), even though Overview itself is unmounted for that whole
   // 520ms.
   const overviewSheetRef = useRef<HTMLDivElement | null>(null);
+  // See PartViewScaleProbe: lets a closing part's camera compute what its
+  // own `.diagram` box will be once the plaque column collapses, which
+  // `.view.closing` (globals.css) drives in lockstep with that same
+  // 520ms, instead of its live (plaque-still-present, narrower) box.
+  const collapsedStageRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     return () => {
@@ -204,6 +210,7 @@ export function EngineApp() {
   return (
     <>
       <OverviewScaleProbe sheetRef={overviewSheetRef} />
+      <PartViewScaleProbe stageRef={collapsedStageRef} />
       <AnimatePresence initial={false}>
         <motion.div
           key={mode}
@@ -224,6 +231,7 @@ export function EngineApp() {
               cameraRef={cameraRef}
               prevOpenRef={prevOpenRef}
               overviewSheetRef={overviewSheetRef}
+              collapsedStageRef={collapsedStageRef}
               onBack={closePart}
               onJumpPart={jumpPart}
               onReset={reset}

@@ -20,6 +20,7 @@ interface PartViewProps {
   cameraRef: MutableRefObject<CameraTransform>;
   prevOpenRef: MutableRefObject<PartId | null>;
   overviewSheetRef: MutableRefObject<HTMLDivElement | null>;
+  collapsedStageRef: MutableRefObject<HTMLDivElement | null>;
   onBack: () => void;
   onJumpPart: (id: PartId) => void;
   onReset: () => void;
@@ -46,6 +47,7 @@ export function PartView({
   cameraRef,
   prevOpenRef,
   overviewSheetRef,
+  collapsedStageRef,
   onBack,
   onJumpPart,
   onReset,
@@ -93,7 +95,7 @@ export function PartView({
           </span>
         </div>
       </header>
-      <div className="view">
+      <div className={`view${closing ? " closing" : ""}`}>
         <section className="stage" aria-label="Part cutaway">
           <div className="ticks-x" />
           <div className="ticks-y" />
@@ -121,10 +123,11 @@ export function PartView({
               cameraRef={cameraRef}
               prevOpenRef={prevOpenRef}
               overviewSheetRef={overviewSheetRef}
+              collapsedStageRef={collapsedStageRef}
               onOpenPart={() => {}}
             />
           </div>
-          <Minimap currentId={part.id} onJump={onJumpPart} />
+          <Minimap currentId={part.id} onJump={onJumpPart} closing={closing} />
           <div className={`dock-wrap${closing ? " leaving" : ""}`}>
             <Dock
               step={stepNumber}

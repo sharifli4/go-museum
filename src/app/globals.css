@@ -478,6 +478,20 @@ svg [role="button"] {
   padding: 14px;
   min-height: 0;
   height: 100%;
+  /* Matches the camera's own reverse-zoom timing (lock §5: 520ms) --
+     collapsing the plaque column in lockstep with it, not after, means
+     by the time the camera finishes `.diagram`'s own box has already
+     grown to (closely) match what PartViewScaleProbe predicted it would
+     when the camera's target was computed, instead of staying narrower
+     and still cropping content the overview would show. */
+  transition: grid-template-columns 520ms cubic-bezier(0.22, 0.8, 0.2, 1);
+}
+
+/* Two classes beats the plain `.view` rule above (and the narrower-tier
+   `.view` override below) regardless of source order, so this doesn't
+   need to be repeated inside that media query. */
+.view.closing {
+  grid-template-columns: 1fr 0px;
 }
 
 @media (max-width: 1279px) {
@@ -981,8 +995,26 @@ svg [role="button"] {
   }
 }
 
+@keyframes minimapOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
 .mm {
   animation: minimapIn 320ms cubic-bezier(0.22, 0.8, 0.2, 1) 260ms both;
+}
+
+/* Without this, the minimap (unlike the plaque and dock) had no "leaving"
+   state at all and just popped away instantly at the eventual unmount --
+   which would also unfairly inflate a last-reverse-frame-vs-first-
+   overview-frame pixel diff, since the overview never had a minimap to
+   begin with. */
+.mm.leaving {
+  animation: minimapOut 200ms ease both;
 }
 
 .dock-wrap .dock {
@@ -1027,6 +1059,7 @@ svg [role="button"] {
    above would lose to it and the plaque would still slide in. */
 @media (prefers-reduced-motion: reduce) {
   .mm,
+  .mm.leaving,
   .dock-wrap .dock,
   .dock-wrap.leaving .dock,
   .plaque,
